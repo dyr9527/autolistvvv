@@ -1,5 +1,4 @@
 import requests
-import re
 
 URL = "http://www.kaniptv.cn/%E6%99%AE%E9%80%9A%E9%85%92%E5%BA%97.php?ip=106.115.25.181%3A19901"
 OUTPUT_FILE = "kaniptv.m3u"
@@ -16,7 +15,7 @@ def main():
         response = requests.get(URL, headers=headers, timeout=15)
         response.raise_for_status()
 
-        # ⭐ 关键修改：先把 <br> 替换成真正的换行符
+        # 把 <br> 替换成换行符
         text = response.text.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
         lines = text.splitlines()
 
@@ -25,13 +24,13 @@ def main():
             if not line or line.startswith('#'):
                 continue
 
-            # 按逗号分割频道名和链接
             if ',' in line:
                 parts = line.split(',', 1)
                 name = parts[0].strip()
                 url = parts[1].strip()
 
                 if url.startswith('http'):
+                    # ⭐ 直接写入原始 URL，不做任何编码
                     m3u_content.append(f"#EXTINF:-1,{name}")
                     m3u_content.append(url)
                     count += 1
