@@ -5,19 +5,20 @@ import re
 SOURCE_URL = "http://www.kaniptv.cn/%E6%99%AE%E9%80%9A%E9%85%92%E5%BA%97.php?ip=106.115.25.181%3A19901"
 OUTPUT_FILE = "kaniptv.m3u"
 
-# --- 核心配置：使用国内直连图床（不走jsDelivr）---
-LOGO_BASE_URL = "https://live.fanmingming.cn/tv/"
+# --- 核心配置：使用 gcore.jsdelivr.net（国内最稳的jsDelivr节点）---
+# fanmingming/live 仓库的台标文件是全大写命名的，必须严格匹配
+LOGO_BASE_URL = "https://gcore.jsdelivr.net/gh/fanmingming/live/tv/"
 
-# 卫视名称映射表
+# 卫视名称映射表（值必须与fanmingming仓库中的文件名完全一致，全大写）
 WEISHI_MAPPING = {
-    "北京卫视": "btvws", "东方卫视": "dfws", "天津卫视": "tjws", "重庆卫视": "cqws",
-    "黑龙江卫视": "hljws", "辽宁卫视": "lnws", "河北卫视": "hebws", "山东卫视": "sdws",
-    "安徽卫视": "ahws", "河南卫视": "hnws", "湖北卫视": "hubws", "湖南卫视": "hunws",
-    "江西卫视": "jxws", "江苏卫视": "jsws", "浙江卫视": "zjws", "东南卫视": "dnws",
-    "广东卫视": "gdws", "深圳卫视": "szws", "广西卫视": "gxws", "云南卫视": "ynws",
-    "贵州卫视": "gzws", "四川卫视": "scws", "康巴卫视": "kbws", "西藏卫视": "xzws",
-    "陕西卫视": "sxws", "甘肃卫视": "gsws", "青海卫视": "qhws", "宁夏卫视": "nxws",
-    "新疆卫视": "xjws", "内蒙古卫视": "nmgws", "吉林卫视": "jlws", "海南卫视": "hinws"
+    "北京卫视": "BTVWS", "东方卫视": "DFWS", "天津卫视": "TJWS", "重庆卫视": "CQWS",
+    "黑龙江卫视": "HLJWS", "辽宁卫视": "LNWS", "河北卫视": "HEBWS", "山东卫视": "SDWS",
+    "安徽卫视": "AHWS", "河南卫视": "HNWS", "湖北卫视": "HUBWS", "湖南卫视": "HUNWS",
+    "江西卫视": "JXWS", "江苏卫视": "JSWS", "浙江卫视": "ZJWS", "东南卫视": "DNWS",
+    "广东卫视": "GDWS", "深圳卫视": "SZWS", "广西卫视": "GXWS", "云南卫视": "YNWS",
+    "贵州卫视": "GZWS", "四川卫视": "SCWS", "康巴卫视": "KBWS", "西藏卫视": "XZWS",
+    "陕西卫视": "SXWS", "甘肃卫视": "GSWS", "青海卫视": "QHWS", "宁夏卫视": "NXWS",
+    "新疆卫视": "XJWS", "内蒙古卫视": "NMGWS", "吉林卫视": "JLWS", "海南卫视": "HINWS"
 }
 
 def get_group_and_logo(channel_name):
@@ -31,6 +32,7 @@ def get_group_and_logo(channel_name):
     # --- 1. 央视频道 (CCTV) ---
     if name_upper.startswith("CCTV"):
         group = "央视频道"
+        # fanmingming仓库中CCTV台标为全大写，如CCTV1.png、CCTV5PLUS.png
         clean_cctv = name_upper.replace("-", "").replace(" ", "")
         if "CCTV5+" in clean_cctv:
             clean_cctv = "CCTV5PLUS"
@@ -45,6 +47,7 @@ def get_group_and_logo(channel_name):
                 logo_filename = f"{value}.png"
                 matched = True
                 break
+        # 如果映射表没查到，尝试通用规则（全大写）
         if not matched:
             ws_name = name_upper.replace("卫视", "WS")
             logo_filename = f"{ws_name}.png"
@@ -54,6 +57,7 @@ def get_group_and_logo(channel_name):
         group = "河北地方频道"
         hb_name = name_upper.replace("河北", "")
         hb_name = re.sub(r'高清|HD', '', hb_name).strip()
+        # fanmingming仓库中河北台标命名如 HEBJJSH.png
         logo_filename = f"HEB{hb_name}.png"
 
     # --- 4. 兜底 ---
@@ -87,8 +91,8 @@ def main():
 
             if ',' in line:
                 parts = line.split(',', 1)
-                name = parts[0].strip()
-                url = parts[1].strip()
+                name = parts.strip()
+                url = parts.strip()[[source_group_web_2]]
 
                 if url.startswith('http'):
                     group_title, tvg_logo = get_group_and_logo(name)
