@@ -1,10 +1,8 @@
 name: Auto Update IPTV List
 
 on:
-  # 每天凌晨 3 点自动运行
   schedule:
     - cron: '0 3 * * *'
-  # 也可以手动触发
   workflow_dispatch:
 
 jobs:
@@ -32,7 +30,7 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add kaniptv.txt
-          git rm -f kaniptv.m3u || true
-          git commit -m "Auto update txt list" || exit 0
+          git add kaniptv.m3u  # 注意这里改回 .m3u
+          git rm -f kaniptv.txt || true  # 删除旧的 txt 文件
+          git commit -m "Auto update m3u list with groups" || exit 0
           git push
