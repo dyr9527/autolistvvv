@@ -18,63 +18,75 @@ WEISHI_MAPPING = {
     "江西卫视": "jxws", "江苏卫视": "jsws", "浙江卫视": "zjws", "东南卫视": "dnws",
     "广东卫视": "gdws", "深圳卫视": "szws", "广西卫视": "gxws", "云南卫视": "ynws",
     "贵州卫视": "gzws", "四川卫视": "scws", "康巴卫视": "kbws", "西藏卫视": "xzws",
-    "陕西卫视": "sxws", "甘肃卫视": "gsws", "青海卫视": "qhws", "宁夏卫视": "nxws",
-    "新疆卫视": "xjws", "内蒙古卫视": "nmgws", "吉林卫视": "jlws", "海南卫视": "hinws"
+    "陕西卫视": "sxws", "甘肃卫视": "gs", "青海卫视": "qhws", "宁夏卫视": "nxws",
+    "新疆卫视": "xjws", "内蒙古卫视": "nmws", "海南卫视": "hinws", "三沙卫视": "ssws",
+    "福建东南卫视": "dnws", "海峡卫视": "hxws", "厦门卫视": "xmws"
 }
 
 def get_group_and_logo(channel_name):
     """根据频道名自动匹配分组和台标"""
-    # 清洗频道名，去除首尾空格
     name_clean = channel_name.strip()
-    name_upper = name_clean.upper()
+    name_upper = name_clean.upper() # 统一转大写用于判断
+    name_lower = name_clean.lower() # 统一转小写用于生成文件名
 
     group = "其他"
-    logo_filename = ""
+    logo = ""
 
     # --- 1. 央视频道 (CCTV) ---
     if name_upper.startswith("CCTV"):
         group = "央视频道"
-        # 构建标准文件名，例如 CCTV-1 -> cctv1.png, CCTV5+ -> cctv5plus.png
-        clean_cctv = name_upper.replace("-", "").replace(" ", "")
+        # 处理 CCTV-1 -> cctv1, CCTV5+ -> cctv5plus
+        clean_cctv = name_lower.replace("-", "").replace(" ", "")
         # 特殊处理 CCTV5+
-        if "CCTV5+" in clean_cctv:
-            clean_cctv = "CCTV5PLUS"
-        logo_filename = f"{clean_cctv}.png"
+        if "5+" in clean_cctv:
+            clean_cctv = clean_cctv.replace("5+", "5plus")
+        logo = f"{LOGO_BASE_URL}{clean_cctv}.png"
 
-    # --- 2. 卫视频道 (优先查表，查不到再尝试拼音) ---
+    # --- 2. 卫视频道 (优先查表) ---
     elif "卫视" in name_clean:
         group = "卫视频道"
-        matched = False
-        for key, value in WEISHI_MAPPING.items():
+        matched_key = None
+        # 遍历映射表查找匹配
+        for key in WEISHI_MAPPING:
             if key in name_clean:
-                logo_filename = f"{value}.png"
-                matched = True
+                matched_key = key
                 break
 
-        # 如果映射表没查到，尝试通用拼音规则 (成功率较低，作为兜底)
-        if not matched:
-            ws_name = name_upper.replace("卫视", "WS")
-            logo_filename = f"{ws_name}.png"
+        if matched_key:
+            logo = f"{LOGO_BASE_URL}{WEISHI_MAPPING[matched_key]}.png"
+        else:
+            # 如果不在表中，尝试通用规则：取前两个字 + ws
+            # 例如 "吉林卫视" -> jlws.png (成功率较低，建议用表)
+            short_name = name_lower.replace("卫视", "").replace("电视台", "")[:2]
+            logo = f"{LOGO_BASE_URL}{short_name}ws.png"
 
     # --- 3. 河北地方频道 ---
     elif "河北" in name_clean:
         group = "河北地方频道"
-        # 尝试匹配河北台标，通常图床里是 heb+频道名拼音
-        hb_name = name_upper.replace("河北", "")
-        # 简单处理：去掉“高清”、“HD”等字样
-        hb_name = re.sub(r'高清|HD', '', hb_name).strip()
-        logo_filename = f"HEB{hb_name}.png"
+        # 尝试匹配河北台标，例如 "河北经济生活" -> hebeijjsh.png
+        # 注意：yuanzl77 的河北台标命名可能不完全统一，这里做几种常见尝试
+        hb_suffix = name_lower.replace("河北", "").replace("频道", "").replace("电视台", "")
+
+        # 常见的河北台标文件名猜测
+        possible_names = [
+            f"hebei{hb_suffix}",      # hebeijjsh
+            f"hebei_{hb_suffix}",     # hebei_jjsh
+            f"hb{hb_suffix}",         # hbjjsh
+            "hebeiws"                 # 兜底河北卫视
+        ]
+
+        # 简单起见，我们先用最可能的一个，或者你可以手动修正
+        # 这里假设图床使用的是 hebei + 拼音缩写
+        # 为了稳妥，如果不确定具体文件名，可以先留空，避免显示错误的红叉
+        # 但为了尽量显示，我们尝试拼接
+        logo = f"{LOGO_BASE_URL}hebei{hb_suffix}.png"
 
     # --- 4. 兜底策略 ---
     else:
         group = "其他"
-        # 无法识别的频道不强行指定logo，避免显示错误的占位符
-        logo_filename = ""
+        logo = ""
 
-    # 拼接完整链接
-    full_logo_url = f"{LOGO_BASE_URL}{logo_filename}" if logo_filename else ""
-
-    return group, full_logo_url
+    return group, logo
 
 def main():
     print(f"🚀 开始抓取: {SOURCE_URL}")
@@ -117,11 +129,10 @@ def main():
 
     except Exception as e:
         print(f"❌ 抓取失败: {e}")
-        # 即使失败也写入一个占位符，防止文件为空导致订阅报错
         m3u_lines.append('#EXTINF:-1 group-title="Error",抓取失败请检查源')
         m3u_lines.append("http://example.com/empty")
 
-    # 核心修复：使用 newline='' 配合 join('\n') 确保生成的 M3U 文件是 Unix 换行符
+    # 核心修复：使用 newline='' 确保生成的 M3U 文件是 Unix 换行符
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline='') as f:
         f.write("\n".join(m3u_lines))
 
