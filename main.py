@@ -1,29 +1,44 @@
 import requests
+import re
 
 SOURCE_URL = "http://www.kaniptv.cn/%E6%99%AE%E9%80%9A%E9%85%92%E5%BA%97.php?ip=106.115.25.181%3A19901"
 OUTPUT_FILE = "kaniptv.m3u"
 
 LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/"
 
-def get_logo_filename(channel_name):
+# 需要过滤掉的后缀词
+SUFFIX_WORDS = [
+    "高清", "HD", "hd", "4K", "超清", "标清", "SD",
+    "频道", "电视台", "综合", "财经", "综艺", "体育",
+    "电影", "电视剧", "纪录", "少儿", "军事", "农业",
+    "科教", "戏曲", "社会与法", "新闻", "音乐", "少儿"
+]
+
+def extract_logo_name(channel_name):
     """
-    根据频道名生成台标文件名
-    优先用规则转换，转换不了的直接用原名
+    从频道名中提取台标文件名
     """
     name = channel_name.strip()
     
-    # CCTV频道：CCTV-1 综合 -> CCTV1
+    # 1. CCTV频道特殊处理
     if name.upper().startswith("CCTV"):
-        cctv_name = name.upper().replace("-", "").replace(" ", "")
-        # 提取CCTV数字部分
-        import re
-        match = re.match(r"CCTV(\d+\+?)", cctv_name)
+        # 提取CCTV+数字，如CCTV-1 综合 -> CCTV1
+        match = re.search(r"CCTV[-\s]?(\d+\+?)", name.upper())
         if match:
             num = match.group(1).replace("+", "PLUS")
-            return f"CCTV{num}.png"
+            return f"CCTV{num}"
     
-    # 其他频道：直接用原名（卫视、地方台大多是中文原名）
-    return f"{name}.png"
+    # 2. 去除后缀词
+    clean_name = name
+    for word in SUFFIX_WORDS:
+        clean_name = clean_name.replace(word, "")
+    clean_name = clean_name.strip()
+    
+    # 3. 如果去除后缀后为空，则用原名
+    if not clean_name:
+        clean_name = name
+    
+    return clean_name
 
 def get_group_and_logo(channel_name):
     name = channel_name.strip()
@@ -36,8 +51,8 @@ def get_group_and_logo(channel_name):
     elif "河北" in name:
         group = "河北地方频道"
     
-    logo_filename = get_logo_filename(name)
-    logo_url = f"{LOGO_BASE_URL}{logo_filename}"
+    logo_name = extract_logo_name(name)
+    logo_url = f"{LOGO_BASE_URL}{logo_name}.png"
     
     return group, logo_url
 
