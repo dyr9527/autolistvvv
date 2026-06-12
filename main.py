@@ -1,11 +1,11 @@
 import requests
 
 URL = "http://www.kaniptv.cn/%E6%99%AE%E9%80%9A%E9%85%92%E5%BA%97.php?ip=106.115.25.181%3A19901"
-OUTPUT_FILE = "kaniptv.m3u"
+OUTPUT_FILE = "kaniptv.txt"  # 改成 txt
 
 def main():
     print(f"🚀 开始抓取: {URL}")
-    m3u_content = ["#EXTM3U"]
+    txt_content = []
     count = 0
 
     try:
@@ -30,20 +30,18 @@ def main():
                 url = parts[1].strip()
 
                 if url.startswith('http'):
-                    # ⭐ 直接写入原始 URL，不做任何编码
-                    m3u_content.append(f"#EXTINF:-1,{name}")
-                    m3u_content.append(url)
+                    # txt 格式：频道名,URL
+                    txt_content.append(f"{name},{url}")
                     count += 1
 
         print(f"✅ 成功抓取到 {count} 个频道")
 
     except Exception as e:
         print(f"❌ 抓取失败: {str(e)}")
-        m3u_content.append("#EXTINF:-1,抓取失败-暂无数据")
-        m3u_content.append("http://example.com/empty")
+        txt_content.append("抓取失败,http://example.com/empty")
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(m3u_content))
+        f.write("\n".join(txt_content))
 
     print(f"💾 已保存至 {OUTPUT_FILE}")
 
