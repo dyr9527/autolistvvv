@@ -5,70 +5,66 @@ import re
 SOURCE_URL = "http://www.kaniptv.cn/%E6%99%AE%E9%80%9A%E9%85%92%E5%BA%97.php?ip=106.115.25.181%3A19901"
 OUTPUT_FILE = "kaniptv.m3u"
 
-# --- 核心配置：使用 gcore.jsdelivr.net（国内最稳的jsDelivr节点）---
-# fanmingming/live 仓库的台标文件是全大写命名的，必须严格匹配
-LOGO_BASE_URL = "https://gcore.jsdelivr.net/gh/fanmingming/live/tv/"
+# --- 核心配置：更换为 TV-Logo 源 ---
+LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/yuanzl77/tv-logo@latest/logo/"
 
-# 卫视名称映射表（值必须与fanmingming仓库中的文件名完全一致，全大写）
+# 卫视名称映射表
 WEISHI_MAPPING = {
-    "北京卫视": "BTVWS", "东方卫视": "DFWS", "天津卫视": "TJWS", "重庆卫视": "CQWS",
-    "黑龙江卫视": "HLJWS", "辽宁卫视": "LNWS", "河北卫视": "HEBWS", "山东卫视": "SDWS",
-    "安徽卫视": "AHWS", "河南卫视": "HNWS", "湖北卫视": "HUBWS", "湖南卫视": "HUNWS",
-    "江西卫视": "JXWS", "江苏卫视": "JSWS", "浙江卫视": "ZJWS", "东南卫视": "DNWS",
-    "广东卫视": "GDWS", "深圳卫视": "SZWS", "广西卫视": "GXWS", "云南卫视": "YNWS",
-    "贵州卫视": "GZWS", "四川卫视": "SCWS", "康巴卫视": "KBWS", "西藏卫视": "XZWS",
-    "陕西卫视": "SXWS", "甘肃卫视": "GSWS", "青海卫视": "QHWS", "宁夏卫视": "NXWS",
-    "新疆卫视": "XJWS", "内蒙古卫视": "NMGWS", "吉林卫视": "JLWS", "海南卫视": "HINWS"
+    "北京卫视": "btvws", "东方卫视": "dfws", "天津卫视": "tjws", "重庆卫视": "cqws",
+    "黑龙江卫视": "hljws", "辽宁卫视": "lnws", "河北卫视": "hebws", "山东卫视": "sdws",
+    "安徽卫视": "ahws", "河南卫视": "hnws", "湖北卫视": "hubws", "湖南卫视": "hunws",
+    "江西卫视": "jxws", "江苏卫视": "jsws", "浙江卫视": "zjws", "东南卫视": "dnws",
+    "广东卫视": "gdws", "深圳卫视": "szws", "广西卫视": "gxws", "云南卫视": "ynws",
+    "贵州卫视": "gzws", "四川卫视": "scws", "康巴卫视": "kbws", "西藏卫视": "xzws",
+    "陕西卫视": "sxws", "甘肃卫视": "gs", "青海卫视": "qhws", "宁夏卫视": "nxws",
+    "新疆卫视": "xjws", "内蒙古卫视": "nmws", "海南卫视": "hinws", "三沙卫视": "ssws",
+    "福建东南卫视": "dnws", "海峡卫视": "hxws", "厦门卫视": "xmws"
 }
 
 def get_group_and_logo(channel_name):
     """根据频道名自动匹配分组和台标"""
     name_clean = channel_name.strip()
     name_upper = name_clean.upper()
+    name_lower = name_clean.lower()
 
     group = "其他"
-    logo_filename = ""
+    logo = ""
 
     # --- 1. 央视频道 (CCTV) ---
     if name_upper.startswith("CCTV"):
         group = "央视频道"
-        # fanmingming仓库中CCTV台标为全大写，如CCTV1.png、CCTV5PLUS.png
-        clean_cctv = name_upper.replace("-", "").replace(" ", "")
-        if "CCTV5+" in clean_cctv:
-            clean_cctv = "CCTV5PLUS"
-        logo_filename = f"{clean_cctv}.png"
+        clean_cctv = name_lower.replace("-", "").replace(" ", "")
+        if "5+" in clean_cctv:
+            clean_cctv = clean_cctv.replace("5+", "5plus")
+        logo = f"{LOGO_BASE_URL}{clean_cctv}.png"
 
     # --- 2. 卫视频道 ---
     elif "卫视" in name_clean:
         group = "卫视频道"
-        matched = False
-        for key, value in WEISHI_MAPPING.items():
+        matched_key = None
+        for key in WEISHI_MAPPING:
             if key in name_clean:
-                logo_filename = f"{value}.png"
-                matched = True
+                matched_key = key
                 break
-        # 如果映射表没查到，尝试通用规则（全大写）
-        if not matched:
-            ws_name = name_upper.replace("卫视", "WS")
-            logo_filename = f"{ws_name}.png"
+
+        if matched_key:
+            logo = f"{LOGO_BASE_URL}{WEISHI_MAPPING[matched_key]}.png"
+        else:
+            short_name = name_lower.replace("卫视", "").replace("电视台", "")[:2]
+            logo = f"{LOGO_BASE_URL}{short_name}ws.png"
 
     # --- 3. 河北地方频道 ---
     elif "河北" in name_clean:
         group = "河北地方频道"
-        hb_name = name_upper.replace("河北", "")
-        hb_name = re.sub(r'高清|HD', '', hb_name).strip()
-        # fanmingming仓库中河北台标命名如 HEBJJSH.png
-        logo_filename = f"HEB{hb_name}.png"
+        hb_suffix = name_lower.replace("河北", "").replace("频道", "").replace("电视台", "")
+        logo = f"{LOGO_BASE_URL}hebei{hb_suffix}.png"
 
     # --- 4. 兜底 ---
     else:
         group = "其他"
-        logo_filename = ""
+        logo = ""
 
-    # 拼接完整链接
-    full_logo_url = f"{LOGO_BASE_URL}{logo_filename}" if logo_filename else ""
-
-    return group, full_logo_url
+    return group, logo
 
 def main():
     print(f"🚀 开始抓取: {SOURCE_URL}")
@@ -81,7 +77,7 @@ def main():
         response = requests.get(SOURCE_URL, headers=headers, timeout=20)
         response.raise_for_status()
 
-        # 预处理文本，将HTML换行符转换为真正的换行符
+        # 修复：'\n' 才是真正的换行符
         text = response.text.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
 
         for line in text.splitlines():
@@ -91,14 +87,12 @@ def main():
 
             if ',' in line:
                 parts = line.split(',', 1)
-                name = parts.strip()
-                url = parts.strip()[[source_group_web_2]]
+                name = parts[0].strip()
+                url = parts[1].strip()
 
                 if url.startswith('http'):
                     group_title, tvg_logo = get_group_and_logo(name)
-
                     extinf = f'#EXTINF:-1 group-title="{group_title}" tvg-id="{name}" tvg-name="{name}" tvg-logo="{tvg_logo}",{name}'
-
                     m3u_lines.append(extinf)
                     m3u_lines.append(url)
                     count += 1
@@ -110,7 +104,7 @@ def main():
         m3u_lines.append('#EXTINF:-1 group-title="Error",抓取失败请检查源')
         m3u_lines.append("http://example.com/empty")
 
-    # 使用 newline='' 确保生成 Unix 换行符
+    # 修复："\n" 才是真正的换行符
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline='') as f:
         f.write("\n".join(m3u_lines))
 
