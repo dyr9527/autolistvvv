@@ -1,11 +1,14 @@
 import requests
-import re
 
 # 源站地址
 SOURCE_URL = "http://www.kaniptv.cn/%E6%99%AE%E9%80%9A%E9%85%92%E5%BA%97.php?ip=106.115.25.181%3A19901"
 OUTPUT_FILE = "kaniptv.m3u"
 
-# --- 1. 卫视名称映射表 (用于生成正确的图片文件名) ---
+# 图标源前缀 - 使用 jsDelivr CDN（国内访问快）
+# 这里使用一个公开的电视图标仓库
+LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv"
+
+# 卫视名称映射表
 WEISHI_MAPPING = {
     "北京卫视": "BTVWS", "东方卫视": "DFWS", "天津卫视": "TJWS", "重庆卫视": "CQWS",
     "黑龙江卫视": "HLJWS", "辽宁卫视": "LNWS", "河北卫视": "HEBWS", "山东卫视": "SDWS",
@@ -17,16 +20,16 @@ WEISHI_MAPPING = {
     "新疆卫视": "XJWS", "内蒙古卫视": "NMWS", "海南卫视": "HANWS"
 }
 
-# --- 2. 河北地方台映射表 (新增部分) ---
+# 河北地方台映射表
 HEBEI_LOCAL_MAPPING = {
-    "河北经济生活": "HEB2",      # 对应 HEB2.png
-    "河北都市": "HEB3",          # 对应 HEB3.png
-    "河北影视剧": "HEB4",        # 对应 HEB4.png
-    "河北少儿科教": "HEB5",      # 对应 HEB5.png
-    "河北农民": "HEB6",          # 对应 HEB6.png
-    "河北公共": "HEB7",          # 对应 HEB7.png
-    "河北交通": "HEB8",          # 对应 HEB8.png
-    "河北移动": "HEB9"           # 对应 HEB9.png
+    "河北经济生活": "HEB2",
+    "河北都市": "HEB3",
+    "河北影视剧": "HEB4",
+    "河北少儿科教": "HEB5",
+    "河北农民": "HEB6",
+    "河北公共": "HEB7",
+    "河北交通": "HEB8",
+    "河北移动": "HEB9"
 }
 
 
@@ -41,21 +44,18 @@ def get_group_and_logo(channel_name):
     # --- A. 央视频道 ---
     if name_upper.startswith("CCTV"):
         group = "央视频道"
-        # 去除连字符，例如 CCTV-1 -> CCTV1
         clean_cctv = name_upper.replace("-", "").replace(" ", "")
         logo_file = f"{clean_cctv}.png"
 
     # --- B. 卫视频道 ---
     elif "卫视" in name_clean:
         group = "卫视频道"
-        # 遍历映射表查找匹配
         matched = False
         for key, value in WEISHI_MAPPING.items():
             if key in name_clean:
                 logo_file = f"{value}.png"
                 matched = True
                 break
-        # 如果没在表里，尝试用拼音首字母或原名兜底（这里简单处理为原名）
         if not matched:
             safe_name = name_clean.replace("卫视", "WS").replace("高清", "")
             logo_file = f"{safe_name}.png"
@@ -69,22 +69,19 @@ def get_group_and_logo(channel_name):
                 logo_file = f"{value}.png"
                 matched = True
                 break
-        # 兜底逻辑：如果是河北卫视但没匹配到上面，或者是其他河北台
         if not matched:
-             if "河北卫视" in name_clean:
-                 logo_file = "HEBWS.png"
-             else:
-                 # 尝试直接用名字，防止完全找不到
-                 logo_file = f"{name_clean.replace('高清','')}.png"
+            if "河北卫视" in name_clean:
+                logo_file = "HEBWS.png"
+            else:
+                logo_file = f"{name_clean.replace('高清','')}.png"
 
     # --- D. 其他 ---
     else:
         group = "其他"
         logo_file = f"{name_clean.replace('高清','')}.png"
 
-    # 拼接完整的 Gitee 图标链接
-    # 注意：Gitee raw 链接格式
-    final_logo_url = f"https://gitee.com/nmt88/tvlogo/raw/master/{logo_file}"
+    # 拼接 jsDelivr CDN 链接
+    final_logo_url = f"{LOGO_BASE_URL}/{logo_file}"
 
     return group, final_logo_url
 
@@ -108,12 +105,11 @@ def main():
 
             if ',' in line:
                 parts = line.split(',', 1)
-                name = parts[0].strip()
-                url = parts[1].strip()
+                name = parts.strip()
+                url = parts.strip()[[source_group_web_1]]
 
                 if url.startswith('http'):
                     group_title, tvg_logo = get_group_and_logo(name)
-                    # 写入 M3U 条目
                     extinf = f'#EXTINF:-1 group-title="{group_title}" tvg-id="{name}" tvg-name="{name}" tvg-logo="{tvg_logo}",{name}'
                     m3u_lines.append(extinf)
                     m3u_lines.append(url)
@@ -126,7 +122,6 @@ def main():
         m3u_lines.append('#EXTINF:-1 group-title="其他",抓取失败')
         m3u_lines.append("http://example.com/empty")
 
-    # 强制使用 \n 换行符，防止 Windows 下生成的文件无法被播放器识别
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline='') as f:
         f.write("\n".join(m3u_lines))
 
