@@ -20,6 +20,7 @@ SUFFIX_WORDS = [
 def generate_tvg_id(channel_name):
     """
     生成标准化的 tvg-id，用于匹配 EPG 数据
+    关键：无论如何都要返回一个非空值
     """
     name = channel_name.strip()
     
@@ -28,18 +29,27 @@ def generate_tvg_id(channel_name):
         match = re.search(r"CCTV[-\s]?(\d+)", name)
         if match:
             return f"CCTV{match.group(1)}"
-        # 处理 CCTV-Plus 等特殊情况
+        # 兜底：直接去掉横杠和空格
         return name.replace("-", "").replace(" ", "")
     
-    # 2. 处理 卫视/地方台
+    # 2. 处理 卫视
     if "卫视" in name:
-        # 提取省份名称，如 "河北卫视高清" -> "河北"
-        for word in ["卫视", "高清", "HD"]:
-            name = name.replace(word, "")
-        return f"{name}卫视"
+        # 去掉高清等后缀，保留省份+卫视
+        clean = name
+        for word in ["高清", "HD", "hd", "4K", "超清", "标清"]:
+            clean = clean.replace(word, "")
+        clean = clean.strip()
+        if "卫视" in clean:
+            return clean
+        return f"{clean}卫视"
     
-    # 3. 默认返回清理后的名称
-    return name
+    # 3. 兜底：返回去除后缀词后的名称（绝对不能返回空）
+    clean_name = name
+    for word in SUFFIX_WORDS:
+        clean_name = clean_name.replace(word, "")
+    clean_name = clean_name.strip()
+    
+    return clean_name if clean_name else name
 
 def extract_logo_name(channel_name):
     """
@@ -83,7 +93,7 @@ def get_group_and_logo(channel_name):
 
 def main():
     print(f"🚀 开始抓取: {SOURCE_URL}")
-    # 修改点1: 在头部添加 x-tvg-url 指向 EPG 源
+    # 在头部添加 x-tvg-url 指向 EPG 源
     m3u_lines = [f'#EXTM3U x-tvg-url="{EPG_URL}"']
     count = 0
 
@@ -102,10 +112,7 @@ def main():
             name, url = [x.strip() for x in line.split(',', 1)]
             if url.startswith('http'):
                 group, logo = get_group_and_logo(name)
-                
-                # 修改点2: 使用更规范的 tvg-id
                 tvg_id = generate_tvg_id(name)
-                
                 extinf = f'#EXTINF:-1 group-title="{group}" tvg-id="{tvg_id}" tvg-name="{name}" tvg-logo="{logo}",{name}'
                 m3u_lines.append(extinf)
                 m3u_lines.append(url)
