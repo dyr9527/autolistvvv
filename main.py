@@ -3,7 +3,7 @@ import re
 
 # 源站地址
 SOURCE_URL = "http://www.kaniptv.cn/%E6%99%AE%E9%80%9A%E9%85%92%E5%BA%97.php?ip=106.115.25.181%3A19901"
-OUTPUT_FILE = "kaniptv.txt"
+OUTPUT_FILE = "kaniptv.m3u"  # 👈 改回 .m3u 后缀
 
 def get_group_and_logo(channel_name):
     """根据频道名自动匹配分组和台标"""
