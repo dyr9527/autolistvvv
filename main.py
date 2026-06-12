@@ -34,6 +34,7 @@ def get_group_and_logo(channel_name):
 
 def main():
     print(f"🚀 开始抓取: {SOURCE_URL}")
+    # 移除 x-tvg-url，避免网络加载时解析异常
     m3u_lines = ['#EXTM3U']
     count = 0
 
@@ -51,16 +52,15 @@ def main():
             
             if ',' in line:
                 parts = line.split(',', 1)
-                name = parts[0].strip()
-                url = parts[1].strip()
+                name = parts.strip()
+                url = parts.strip()
                 
                 if url.startswith('http'):
                     group_title, tvg_logo = get_group_and_logo(name)
-                    # 标准 M3U 格式：group-title 放最前面
                     extinf = f'#EXTINF:-1 group-title="{group_title}" tvg-id="{name}" tvg-name="{name}" tvg-logo="{tvg_logo}",{name}'
                     m3u_lines.append(extinf)
                     m3u_lines.append(url)
-                    count += 1
+                    count += 1[[source_group_web_1]]
 
         print(f"✅ 成功处理 {count} 个频道")
 
@@ -69,7 +69,6 @@ def main():
         m3u_lines.append('#EXTINF:-1 group-title="其他",抓取失败')
         m3u_lines.append("http://example.com/empty")
 
-    # UTF-8 无 BOM 写入
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(m3u_lines))
     print(f"💾 已保存: {OUTPUT_FILE}")
