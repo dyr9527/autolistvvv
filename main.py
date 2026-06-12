@@ -3,40 +3,50 @@ import re
 
 # 源站地址和输出文件
 SOURCE_URL = "http://www.kaniptv.cn/%E6%99%AE%E9%80%9A%E9%85%92%E5%BA%97.php?ip=106.115.25.181%3A19901"
-OUTPUT_FILE = "kaniptv.m3u" # 恢复为 m3u 格式
+OUTPUT_FILE = "kaniptv.m3u"
 
 def get_group_and_logo(channel_name):
     """
     根据频道名称判断分类和台标
     """
-    # 统一转为大写便于匹配
     name_upper = channel_name.upper()
     
     # 1. 河北地方频道 (包含"河北"或"HEBEI")
     if "河北" in channel_name or "HEBEI" in name_upper:
         group = "河北地方频道"
-        logo = f"https://live.fanmingming.com/tv/{name_upper}.png"
+        # 尝试提取河北+数字/地区作为台标名，例如 河北1 -> HEBEI1, 河北卫视 -> HEBEIWS
+        logo_name = re.sub(r'[^A-Z0-9\u6CB3\u5317]', '', name_upper)
+        logo_name = logo_name.replace('卫视', 'WS')
+        logo = f"https://live.fanmingming.com/tv/{logo_name}.png"
     
     # 2. 央视频道 (以 CCTV 开头)
     elif name_upper.startswith("CCTV"):
         group = "央视频道"
-        logo = f"https://live.fanmingming.com/tv/{name_upper}.png"
+        # 提取 CCTV+数字/字母部分，例如 CCTV1 -> CCTV1, CCTV5+ -> CCTV5
+        logo_name = re.match(r'CCTV[0-9A-Z\+]*', name_upper)
+        logo = f"https://live.fanmingming.com/tv/{logo_name.group()}.png" if logo_name else f"https://live.fanmingming.com/tv/{name_upper}.png"
     
     # 3. 卫视频道 (包含"卫视")
     elif "卫视" in channel_name:
         group = "卫视频道"
-        logo = f"https://live.fanmingming.com/tv/{name_upper}.png"
+        # 将“卫视”替换为“WS”以匹配台标命名习惯
+        logo_name = name_upper.replace('卫视', 'WS')
+        logo = f"https://live.fanmingming.com/tv/{logo_name}.png"
     
     # 4. 其他
     else:
         group = "其他"
-        logo = f"https://live.fanmingming.com/tv/{name_upper}.png"
+        # 尝试提取英文和数字
+        logo_name = re.sub(r'[^A-Z0-9]', '', name_upper)
+        logo = f"https://live.fanmingming.com/tv/{logo_name}.png" if logo_name else "https://live.fanmingming.com/tv/DEFAULT.png"
     
     return group, logo
 
 def main():
     print(f"🚀 开始抓取源站: {SOURCE_URL}")
-    m3u_lines = ["#EXTM3U"] # M3U 文件头
+    m3u_lines = [
+        '#EXTM3U x-tvg-url="https://live.fanmingming.com/e.xml.gz"'
+    ] # M3U 文件头，加入了 EPG 地址
     count = 0
 
     try:
@@ -65,8 +75,8 @@ def main():
                     group_title, tvg_logo = get_group_and_logo(name)
                     
                     # 构建标准 M3U 行
-                    # 格式: #EXTINF:-1 tvg-id="NAME" tvg-name="NAME" tvg-logo="URL" group-title="GROUP",NAME
-                    extinf = f'#EXTINF:-1 tvg-id="{name}" tvg-name="{name}" tvg-logo="{tvg_logo}" group-title="{group_title}",{name}'
+                    # 注意：将 group-title 放在前面，有助于 OK影视 识别
+                    extinf = f'#EXTINF:-1 group-title="{group_title}" tvg-id="{name}" tvg-name="{name}" tvg-logo="{tvg_logo}",{name}'
                     
                     m3u_lines.append(extinf)
                     m3u_lines.append(url)
@@ -77,11 +87,11 @@ def main():
     except Exception as e:
         print(f"❌ 抓取或处理失败: {str(e)}")
         # 如果出错，写入一个错误提示频道
-        error_line = '#EXTINF:-1 tvg-id="抓取失败" tvg-name="抓取失败" tvg-logo="https://live.fanmingming.com/tv/ERROR.png" group-title="其他",抓取失败-请检查源站'
+        error_line = '#EXTINF:-1 group-title="其他" tvg-id="抓取失败" tvg-name="抓取失败" tvg-logo="https://live.fanmingming.com/tv/ERROR.png",抓取失败-请检查源站'
         m3u_lines.append(error_line)
         m3u_lines.append("http://example.com/empty")
 
-    # 写入文件
+    # 写入文件 (确保编码为 UTF-8)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(m3u_lines))
 
