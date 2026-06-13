@@ -9,11 +9,15 @@ import random
 BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
 OUTPUT_FILE = "kaniptv.m3u"
 
-# ✅ 已修正：使用 raw.githubusercontent.com 确保播放器能读取图片
-LOGO_BASE_URL = "https://raw.githubusercontent.com/fanmingming/live/main/tv/"
+# ✅ 台标源：使用 jsDelivr CDN 加速（比 raw.githubusercontent.com 更稳定）
+LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/"
 
-# ✅ 已更新：指定的 EPG 节目单地址
+# ✅ EPG 节目单地址
 EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
+
+# ✅ 筛选条件：必须同时包含以下两个关键词
+TARGET_KEYWORD = "河北电信"   # 运营商关键词
+TARGET_DATE = "2026-06-12"    # 收录时间
 
 SUFFIX_WORDS = [
     "高清", "HD", "hd", "4K", "超清", "标清", "SD",
@@ -28,13 +32,11 @@ HEADERS = {
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
 }
 
-
 # ==================== 核心网络模块（含自动代理） ====================
 
 def get_proxy():
     """
     尝试从公开接口获取一个可用的 HTTP 代理
-    如果获取失败，返回 None，脚本将尝试直连
     """
     proxy_apis = [
         "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=cn&ssl=all&anonymity=all",
@@ -45,7 +47,6 @@ def get_proxy():
             resp = requests.get(api, timeout=5)
             if resp.status_code == 200:
                 proxies_list = resp.text.strip().split('\r\n')
-                # 随机取一个，避免总是用同一个被封
                 if proxies_list:
                     ip_port = random.choice(proxies_list).strip()
                     if ':' in ip_port:
@@ -54,9 +55,8 @@ def get_proxy():
         except Exception as e:
             continue
 
-    print("⚠️ 未能获取到可用代理，将尝试直连（可能会超时）...")
+    print("⚠️ 未能获取到可用代理，将尝试直连...")
     return None
-
 
 def safe_request(url, max_retries=3):
     """
@@ -67,26 +67,22 @@ def safe_request(url, max_retries=3):
     for attempt in range(max_retries):
         try:
             print(f"   🔄 正在请求 (尝试 {attempt+1}/{max_retries})...")
-            # 如果有代理就用代理，没有就传 None (直连)
             resp = requests.get(url, headers=HEADERS, proxies=proxy, timeout=15)
 
             if resp.status_code == 200:
-                # 简单的内容校验，防止抓到验证码页面
                 if len(resp.text) > 100:
                     return resp.text
                 else:
                     print(f"   ⚠️ 响应内容过短，可能被拦截，切换代理重试...")
-                    proxy = get_proxy()  # 重新获取代理
+                    proxy = get_proxy()
             else:
                 print(f"   ⚠️ 状态码: {resp.status_code}")
 
         except requests.exceptions.RequestException as e:
             print(f"   ❌ 请求失败: {e}")
-            # 失败了也尝试换个代理
             proxy = get_proxy()
 
     return None
-
 
 # ==================== 业务逻辑 ====================
 
@@ -101,22 +97,36 @@ def get_telecom_links(page_url):
     soup = BeautifulSoup(html, 'html.parser')
     telecom_links = []
 
-    # 这里的正则匹配可能需要根据网站实际变动微调
-    operator_tags = soup.find_all(string=re.compile("河北-电信"))
+    # ✅ 先找所有包含 TARGET_KEYWORD 的文本节点
+    keyword_tags = soup.find_all(string=re.compile(TARGET_KEYWORD))
 
-    for tag in operator_tags:
-        btn = tag.find_previous(name='a')
+    found_count = 0
+    for tag in keyword_tags:
+        # 获取该文本所在的父级 <a> 标签
+        btn = tag.find_parent(name='a')
+
         if btn and btn.get('href'):
-            link = btn['href']
-            if not link.startswith('http'):
-                base_domain = "http://nn.7x9d.cn"
-                link = base_domain + "/" + link.lstrip('/')
-            ip_text = btn.get_text(strip=True)
-            print(f"✅ 发现电信源: [{ip_text}] -> {link}")
-            telecom_links.append(link)
+            link_text = btn.get_text(strip=True)
+
+            # ✅ 双重验证：必须同时包含关键词和日期
+            if TARGET_DATE in link_text:
+                link = btn['href']
+                # 补全相对路径
+                if not link.startswith('http'):
+                    base_domain = "http://nn.7x9d.cn"
+                    link = base_domain + "/" + link.lstrip('/')
+
+                print(f"✅ 匹配成功 [{TARGET_DATE}]: {link_text} -> {link}")
+                telecom_links.append(link)
+                found_count += 1
+            else:
+                # 包含关键词但不包含目标日期的，跳过
+                print(f"⏭️ 跳过非目标日期源: {link_text}")
+
+    if found_count == 0:
+        print(f"⚠️ 未找到同时包含 '{TARGET_KEYWORD}' 和 '{TARGET_DATE}' 的链接，请检查网页结构或日期格式。")
 
     return list(set(telecom_links))
-
 
 def fetch_playlist(url):
     print(f"   📡 正在抓取子源: {url}")
@@ -131,7 +141,6 @@ def fetch_playlist(url):
         return ""
 
     return content
-
 
 def parse_raw_content(content):
     channels = []
@@ -168,7 +177,6 @@ def parse_raw_content(content):
 
     return channels
 
-
 def extract_logo_name(channel_name):
     name = channel_name.strip()
     if name.upper().startswith("CCTV"):
@@ -186,7 +194,6 @@ def extract_logo_name(channel_name):
         clean_name = clean_name.replace(word, "")
     return clean_name.strip() if clean_name.strip() else name
 
-
 def get_channel_group(channel_name):
     name = channel_name.strip()
     if name.upper().startswith("CCTV"): return "央视频道"
@@ -196,7 +203,6 @@ def get_channel_group(channel_name):
     elif any(x in name for x in ["体育", "赛事"]): return "体育频道"
     elif any(x in name for x in ["少儿", "卡通"]): return "少儿频道"
     else: return "其他"
-
 
 def get_epg_id(channel_name):
     name = channel_name.strip().upper()
@@ -221,7 +227,6 @@ def get_epg_id(channel_name):
     if "河北" in name: return name.replace("高清", "").replace("HD", "").strip()
     return name
 
-
 def enrich_channels(raw_channels):
     merged = {}
     for ch in raw_channels:
@@ -241,7 +246,6 @@ def enrich_channels(raw_channels):
         if url not in merged[name]['urls']:
             merged[name]['urls'].append(url)
     return merged
-
 
 def generate_m3u(enriched_channels, output_file):
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
@@ -264,16 +268,14 @@ def generate_m3u(enriched_channels, output_file):
                 total_count += 1
     return total_count
 
-
 def main():
     print("=" * 50)
-    print("🚀 河北电信直播源抓取工具 (Proxy Enabled)")
+    print(f"🚀 河北电信直播源抓取工具 (目标日期: {TARGET_DATE})")
     print("=" * 50)
 
     links = get_telecom_links(BASE_URL)
     if not links:
-        print("❌ 未找到任何链接，程序终止")
-        # 即使没找到，也生成一个空文件，防止 git commit 报错说文件不存在
+        print("❌ 未找到符合条件的链接，程序终止")
         with open(OUTPUT_FILE, 'w') as f: f.write("#EMPTY\n")
         return
 
@@ -298,7 +300,6 @@ def main():
     print("\n" + "=" * 50)
     print(f"🎉 完成！唯一频道: {len(enriched)}, 总线路: {total}")
     print("=" * 50)
-
 
 if __name__ == '__main__':
     main()
