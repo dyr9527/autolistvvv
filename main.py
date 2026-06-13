@@ -5,126 +5,115 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import os
+import time
 
 # ================= 配置区 =================
 LIST_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
 OUTPUT_FILE = "output/live_channels.m3u"
 
-# 严格的筛选条件
-REQUIRED_ISP = "河北-电信"
-REQUIRED_DATE = "2026-06-12" # 只匹配收录日期
+# === 筛选条件 (请根据实际情况修改) ===
+TARGET_ISP = "河北-电信"
+TARGET_DATE = "2026-06-12"  # 只要收录时间是这一天的
 
-# 模拟浏览器请求头
+# 模拟浏览器请求头 (必须加，否则容易被拦截)
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Referer': 'http://nn.7x9d.cn/',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 }
 
-def find_target_detail_url():
+
+def find_and_fetch_source():
     """
-    1. 获取列表页
-    2. 查找符合条件的 <a> 标签
-    3. 返回下级页面的完整 URL
+    主逻辑：寻找符合条件的条目，并进入下级页面抓取
     """
-    print(f"正在抓取列表页: {LIST_URL}")
-    
+    print(f"正在连接列表页...")
+
     try:
-        response = requests.get(LIST_URL, headers=HEADERS, timeout=20)
-        response.encoding = 'utf-8'
+        # 增加超时时间到 30 秒，防止 GitHub Actions 网络波动导致直接报错
+        response = requests.get(LIST_URL, headers=HEADERS, timeout=30)
+        response.encoding = 'utf-8'  # 强制指定编码，防止乱码
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 查找所有 <a> 标签 (蓝色框通常是 a 标签)
-        # 根据提供的源码，我们需要遍历所有 a 标签并检查其旁边的文本
-        all_a_tags = soup.find_all('a', href=True)
-        
-        for tag in all_a_tags:
-            ip_text = tag.get_text(strip=True)
-            parent = tag.find_parent()
-            if not parent:
-                continue
-                
-            parent_text = parent.get_text()
-            
-            # 1. 检查运营商
-            if REQUIRED_ISP not in parent_text:
-                continue
-                
-            # 2. 检查收录时间 (严格匹配 REQUIRED_DATE)
-            # 使用正则查找 "收录时间：" 后面的内容，确保包含 REQUIRED_DATE
-            time_match = re.search(r'收录时间[：:]\s*(\d{4}-\d{2}-\d{2})', parent_text)
-            if not time_match or time_match.group(1) != REQUIRED_DATE:
-                continue
-                
-            # --- 找到目标 ---
-            # 获取 href (通常是 detail.php?id=xxx 形式)
-            href = tag['href']
-            
-            # 拼接完整 URL
-            if href.startswith('http'):
-                full_url = href
-            else:
-                # 假设是相对路径
-                base = "http://nn.7x9d.cn/"
-                full_url = base + href.lstrip('/')
-                
-            print(f"✅ 成功匹配目标！")
-            print(f"   IP地址: {ip_text}")
-            print(f"   运营商: {REQUIRED_ISP}")
-            print(f"   收录日期: {REQUIRED_DATE}")
-            print(f"   下级链接: {full_url}")
-            return full_url
-            
-        print(f"❌ 未找到满足条件的链接 (运营商: {REQUIRED_ISP}, 收录日期: {REQUIRED_DATE})")
-        return None
-        
     except Exception as e:
-        print(f"❌ 抓取列表页时发生异常: {e}")
+        print(f"[错误] 无法连接列表页: {e}")
         return None
 
-def fetch_and_save_m3u(detail_url):
-    """
-    2. 访问下级页面，获取纯文本直播源，并保存为 M3U
-    """
-    if not detail_url:
-        return
-        
-    print(f"\n正在访问下级页面获取直播源: {detail_url}")
-    
+    # 假设每个条目都在一个大的容器里，比如 div 或 tr
+    # 这里我们遍历所有的 <a> 标签，因为蓝色框通常是链接
+    # 如果结构很特殊，可能需要遍历 div
+    all_links = soup.find_all('a')
+
+    target_url = None
+
+    for link in all_links:
+        # 1. 检查这个链接是否有效 (href 不能为空)
+        href = link.get('href')
+        if not href:
+            continue
+
+        # 2. 获取该链接周围的文本内容，或者其父级容器的文本
+        # 很多老网站结构是：<a href="...">蓝色框</a> <br> 河北-电信 ...
+        # 所以我们看 link.parent (父级) 的文本内容
+        parent_text = link.parent.get_text()
+
+        # 3. 严格匹配条件
+        if TARGET_ISP in parent_text and TARGET_DATE in parent_text:
+            print(f"[成功] 找到目标！")
+            print(f"   运营商: {TARGET_ISP}")
+            print(f"   日期: {TARGET_DATE}")
+            print(f"   原始链接: {href}")
+
+            # 处理相对路径 (例如 href="xzjd3.php?id=xxx")
+            if href.startswith('http'):
+                target_url = href
+            else:
+                # 拼接成完整 URL
+                base_url = LIST_URL.rsplit('/', 1)[0]
+                target_url = f"{base_url}/{href}"
+
+            break  # 找到第一个就停止
+
+    if not target_url:
+        print("[失败] 未找到符合条件的链接，请检查日期或运营商名称是否完全一致。")
+        return None
+
+    # --- 第二步：进入下级页面抓取直播源 ---
+    print(f"\n正在进入下级页面获取直播源: {target_url}")
     try:
-        # 在访问下级页面时，可能需要带上 Referer
-        response = requests.get(detail_url, headers=HEADERS, timeout=20)
-        response.encoding = 'utf-8'
-        
-        # 假设下级页面直接返回的是纯文本的直播源 (m3u 格式或 txt 格式)
-        page_content = response.text.strip()
-        
-        if not page_content:
-            print("❌ 下级页面返回内容为空！")
-            return
-            
-        # --- 生成 M3U 文件 ---
-        # 确保输出目录存在
-        os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-        
-        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-            # 写入 M3U 头部
-            f.write(f"#EXTM3U tvg-url=\"{detail_url}\" \n")
-            f.write(f"# 源地址: {detail_url}\n")
-            f.write(f"# 抓取时间: 2026-06-13\n")
-            f.write(f"# 运营商: {REQUIRED_ISP} (收录于 {REQUIRED_DATE})\n")
-            f.write(f"# --- 以下是原始内容 ---\n")
-            
-            # 写入抓取到的纯文本内容
-            # 注意：如果抓取到的内容已经是完整的 m3u 格式，可以直接写入
-            # 如果是简单的 url 列表，可能需要处理格式，这里假设是标准 m3u
-            f.write(page_content)
-            
-        print(f"✅ 直播源已成功保存到: {OUTPUT_FILE}")
-        
+        # 再次请求下级页面
+        res_detail = requests.get(target_url, headers=HEADERS, timeout=30)
+        res_detail.encoding = 'utf-8'
+
+        # 假设下级页面直接就是 m3u 文本，或者是包含 m3u 链接的网页
+        # 这里直接返回内容，你可以根据实际情况解析
+        content = res_detail.text
+
+        # 简单的判断：如果内容包含 #EXTM3U，说明直接就是播放列表
+        if '#EXTM3U' in content or '.m3u8' in content or '.ts' in content:
+            print("[成功] 获取到直播源内容！")
+            return content
+        else:
+            # 如果不是直接文本，可能还需要再次解析 HTML 找链接
+            # 这里为了通用，先打印前 200 个字符让你看看是什么
+            print(f"[提示] 下级页面内容预览:\n{content[:200]}...")
+            return content  # 暂时直接返回，你可以后续优化
+
     except Exception as e:
-        print(f"❌ 获取下级页面内容失败: {e}")
+        print(f"[错误] 进入下级页面失败: {e}")
+        return None
+
+
+def save_to_file(content):
+    """保存文件"""
+    if not content:
+        return
+
+    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print(f"\n[完成] 直播源已保存到: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
-    print("=== 酒店源自动抓取脚本 (精准版) ===")
-    target_url = find_target_detail_url()
-    fetch_and_save_m3u(target_url)
+    source_content = find_and_fetch_source()
+    save_to_file(source_content)
