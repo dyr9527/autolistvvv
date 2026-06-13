@@ -2,16 +2,15 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
+import os
 import random
+import gzip
+import io
 
 # --- 配置区 ---
 BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=河北"  # 河北专区
 OUTPUT_FILE = "kaniptv.m3u"
-
-# 修改为正确的 Logo Raw 地址
 LOGO_BASE_URL = "https://raw.githubusercontent.com/fanmingming/live/main/tv/"
-
-# 修改为直接使用压缩的 EPG 链接 (更兼容，无需本地解压)
 EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
 
 SUFFIX_WORDS = [
@@ -27,13 +26,13 @@ HEADERS = {
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
 }
 
-# ==================== 核心网络模块（含自动代理） ====================
+# ==================== 核心网络模块（修复版：增加直连兜底） ====================
 
 def get_proxy():
+    """获取代理，如果失败返回 None"""
     proxy_apis = [
         "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=cn&ssl=all&anonymity=all",
     ]
-
     for api in proxy_apis:
         try:
             resp = requests.get(api, timeout=5)
@@ -42,34 +41,56 @@ def get_proxy():
                 if proxies_list:
                     ip_port = random.choice(proxies_list).strip()
                     if ':' in ip_port:
-                        print(f"🚀 获取到临时代理: {ip_port}")
                         return {"http": f"http://{ip_port}", "https": f"http://{ip_port}"}
-        except Exception as e:
+        except Exception:
             continue
-
-    print("⚠️ 未能获取到可用代理，将尝试直连（可能会超时）...")
     return None
 
-def safe_request(url, max_retries=3):
-    proxy = get_proxy()
+def safe_request(url, max_retries=4):
+    """
+    带重试的安全请求
+    策略：先试代理 -> 失败换代理 -> 再失败试直连 -> 最后放弃
+    """
+    # 第一次尝试使用代理
+    current_proxy = get_proxy()
 
     for attempt in range(max_retries):
+        use_proxy_str = "使用代理" if current_proxy else "直连"
+        print(f"   🔄 正在请求 [{use_proxy_str}] (尝试 {attempt+1}/{max_retries})...")
+
         try:
-            print(f"   🔄 正在请求 (尝试 {attempt+1}/{max_retries})...")
-            resp = requests.get(url, headers=HEADERS, proxies=proxy, timeout=15)
+            # 如果是直连，适当增加一点超时时间
+            timeout_val = 20 if not current_proxy else 15
+
+            resp = requests.get(
+                url,
+                headers=HEADERS,
+                proxies=current_proxy,
+                timeout=timeout_val
+            )
 
             if resp.status_code == 200:
                 if len(resp.text) > 100:
                     return resp.text
                 else:
-                    print(f"   ⚠️ 响应内容过短，可能被拦截，切换代理重试...")
-                    proxy = get_proxy()
+                    print(f"   ⚠️ 响应内容过短，可能被拦截")
+                    # 内容不对，强制切换模式
+                    current_proxy = None if current_proxy else get_proxy()
             else:
                 print(f"   ⚠️ 状态码: {resp.status_code}")
+                # 状态码不对，也尝试切换
+                current_proxy = None if current_proxy else get_proxy()
 
         except requests.exceptions.RequestException as e:
-            print(f"   ❌ 请求失败: {e}")
-            proxy = get_proxy()
+            print(f"   ❌ 请求失败: {type(e).__name__}")
+            # 关键修复：如果当前是代理且失败了，下一次尝试直连 (None)
+            # 如果当前已经是直连还失败，那就再试一次代理
+            if current_proxy:
+                print("   💡 代理似乎不可用，下次尝试直连...")
+                current_proxy = None
+            else:
+                print("   💡 直连失败，尝试获取新代理...")
+                current_proxy = get_proxy()
 
     return None
 
@@ -86,11 +107,9 @@ def get_telecom_links(page_url):
     soup = BeautifulSoup(html, 'html.parser')
     telecom_links = []
 
-    # 筛选条件：运营商为"河北-电信"，收录时间为 2026-06-12
     operator_tags = soup.find_all(string=re.compile("河北-电信"))
 
     for tag in operator_tags:
-        # 检查收录时间是否匹配 (注意：你当前是2026-06-13，如果网页上是昨天的日期，请相应调整)
         parent_text = tag.parent.get_text() if tag.parent else ""
         if "2026-06-12" not in parent_text:
             continue
@@ -159,7 +178,7 @@ def parse_raw_content(content):
 def extract_logo_name(channel_name):
     name = channel_name.strip()
     if name.upper().startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(.+)", name.upper())
+        match = re.search(r"CCTV[-\s]?(\d+?)", name.upper())
         if match:
             num = match.group(1).replace("+", "PLUS")
             return f"CCTV{num}"
@@ -184,38 +203,17 @@ def get_channel_group(channel_name):
     else: return "其他"
 
 def get_epg_id(channel_name):
-    """
-    这个函数尝试将频道名转换为 EPG 源中使用的 ID 格式。
-    由于 EPG 源是通用的，这里尽量做标准化处理。
-    """
     name = channel_name.strip().upper()
-    
-    # 处理 CCTV
     if name.startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(.+)", name)
-        if match: 
-            num = match.group(1).replace("+", "PLUS")
-            return f"CCTV{num}"
-    
-    # 处理 卫视
+        match = re.search(r"CCTV[-\s]?(\d+?)", name)
+        if match: return f"CCTV{match.group(1).replace('+', 'PLUS')}"
     if "卫视" in name:
         match = re.search(r"(.+?)卫视", name)
         if match:
             province = match.group(1).strip()
-            # 简单映射，确保格式正确
-            p_map = {
-                "北京": "BTV", "上海": "东方卫视", "天津": "天津卫视", "重庆": "重庆卫视",
-                "湖南": "湖南卫视", "浙江": "浙江卫视", "江苏": "江苏卫视", "广东": "广东卫视",
-                "山东": "山东卫视", "河南": "河南卫视", "河北": "河北卫视", "四川": "四川卫视",
-                "湖北": "湖北卫视", "辽宁": "辽宁卫视", "黑龙江": "黑龙江卫视", "吉林": "吉林卫视",
-                "安徽": "安徽卫视", "福建": "福建卫视", "江西": "江西卫视", "山西": "山西卫视",
-                "陕西": "陕西卫视", "甘肃": "甘肃卫视", "青海": "青海卫视", "宁夏": "宁夏卫视",
-                "新疆": "新疆卫视", "西藏": "西藏卫视", "内蒙古": "内蒙古卫视", "广西": "广西卫视",
-                "贵州": "贵州卫视", "云南": "云南卫视", "海南": "海南卫视"
-            }
+            p_map = {"北京":"BTV","上海":"东方卫视","天津":"天津卫视","重庆":"重庆卫视","湖南":"湖南卫视","浙江":"浙江卫视","江苏":"江苏卫视","广东":"广东卫视","山东":"山东卫视","河南":"河南卫视","河北":"河北卫视","四川":"四川卫视","湖北":"湖北卫视","辽宁":"辽宁卫视","黑龙江":"黑龙江卫视","吉林":"吉林卫视","安徽":"安徽卫视","福建":"福建卫视","江西":"江西卫视","山西":"山西卫视","陕西":"陕西卫视","甘肃":"甘肃卫视","青海":"青海卫视","宁夏":"宁夏卫视","新疆":"新疆卫视","西藏":"西藏卫视","内蒙古":"内蒙古卫视","广西":"广西卫视","贵州":"贵州卫视","云南":"云南卫视","海南":"海南卫视"}
             return p_map.get(province, f"{province}卫视")
-    
-    # 默认返回原名称，期望 EPG 源中包含该名称
+    if "河北" in name: return name.replace("高清","").replace("HD","").strip()
     return name
 
 def enrich_channels(raw_channels):
@@ -224,12 +222,10 @@ def enrich_channels(raw_channels):
         name = ch['name']
         url = ch['url']
         if name not in merged:
-            # 使用标准化的 ID 获取 EPG
-            epg_id = get_epg_id(name)
             merged[name] = {
                 'group': get_channel_group(name),
                 'logo': f"{LOGO_BASE_URL}{extract_logo_name(name).replace(' ', '').replace('-', '')}.png",
-                'epg': epg_id,
+                'epg': get_epg_id(name),
                 'urls': []
             }
         if url not in merged[name]['urls']:
@@ -238,7 +234,7 @@ def enrich_channels(raw_channels):
 
 def generate_m3u(enriched_channels, output_file):
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        # 直接写入压缩的 EPG 链接
+        # 写入 EPG 链接
         f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
         total_count = 0
         for name, info in enriched_channels.items():
