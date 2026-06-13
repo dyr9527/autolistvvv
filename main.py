@@ -1,153 +1,65 @@
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-from datetime import date
 import os
+import re
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-# ===================== 全局配置 =====================
-MAIN_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
-BASE_DOMAIN = "http://nn.7x9d.cn"
-FILTER_OPERATOR = "河北-电信"
-FILTER_DATE = "2026-06-12"
-
-# 台标 & EPG
-LOGO_BASE = "https://raw.githubusercontent.com/fanmingming/live/main/tv/"
-EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
-}
-
-# 分类关键词
-RULE_CCTV = ["央视", "CCTV"]
-RULE_WEISHI = ["卫视"]
-RULE_HEBEI = ["河北"]
-# ====================================================
-
-def get_sub_links():
-    """抓取符合条件的下级链接"""
+def scrape_and_generate_m3u():
+    # 1. 配置无头浏览器模式 (适用于 GitHub Actions)
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    
+    driver = webdriver.Chrome(options=chrome_options)
+    
     try:
-        res = requests.get(MAIN_URL, headers=HEADERS, timeout=20)
-        res.raise_for_status()
-        soup = BeautifulSoup(res.text, "html.parser")
-        sub_links = []
-
-        for elem in soup.find_all(True):
-            txt = elem.get_text(strip=True)
-            if FILTER_OPERATOR in txt and FILTER_DATE in txt:
-                a_tag = elem.find_previous("a") or elem.find("a")
-                if a_tag and a_tag.get("href"):
-                    full_url = urljoin(BASE_DOMAIN, a_tag["href"])
-                    sub_links.append(full_url)
-        return list(set(sub_links))
+        target_url = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
+        driver.get(target_url)
+        
+        # 2. 精准定位目标按钮并点击
+        # 寻找包含指定文本的元素，并向上查找最近的蓝色链接按钮
+        xpath_query = "//a[contains(@class, 'blue') and contains(text(), ':')][following::text()[contains(., '运营商：河北-电信')]][1]"
+        wait = WebDriverWait(driver, 15)
+        button = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_query)))
+        button.click()
+        
+        # 等待新页面加载完成
+        time.sleep(5) 
+        page_text = driver.page_source
+        
+        # 3. 提取纯文本中的 IP/URL (请根据实际网页内容微调正则)
+        stream_pattern = r'(?:http|rtsp|rtmp)://[^\s<>\'"]+'
+        streams = list(set(re.findall(stream_pattern, page_text)))
+        
+        # 4. 组装标准 M3U 格式
+        m3u_content = ["#EXTM3U"]
+        for stream in streams:
+            # 简单处理频道名称（截取域名或路径作为默认名称）
+            channel_name = re.sub(r'.*/', '', stream).split('.')[0] 
+            
+            # TODO: 这里可以接入外部台标库和 EPG 接口进行匹配
+            tvg_logo = "" 
+            epg_id = ""
+            
+            extinf_line = f'#EXTINF:-1 tvg-id="{epg_id}" tvg-name="{channel_name}" tvg-logo="{tvg_logo}", {channel_name}'
+            m3u_content.append(extinf_line)
+            m3u_content.append(stream)
+            
+        # 5. 写入本地文件
+        with open("output.m3u", "w", encoding="utf-8") as f:
+            f.write("\n".join(m3u_content))
+            
+        print(f"M3U 生成成功，共包含 {len(streams)} 个有效频道！")
+        
     except Exception as e:
-        print(f"抓取下级链接失败: {e}")
-        return []
-
-def extract_live_source(link):
-    """纯文本整行提取，不判断协议，只取有效非空行"""
-    try:
-        res = requests.get(link, headers=HEADERS, timeout=20)
-        res.raise_for_status()
-        soup = BeautifulSoup(res.text, "html.parser")
-        sources = []
-        # 遍历所有文本节点，提取每行纯文本
-        all_text = soup.get_text(separator="\n")
-        for line in all_text.splitlines():
-            line = line.strip()
-            # 过滤空行、注释行
-            if line and not line.startswith(("#", "//")):
-                sources.append(line)
-        return sources
-    except Exception as e:
-        print(f"解析 {link} 失败: {e}")
-        return []
-
-def get_logo_url(channel_name):
-    """拼接台标地址"""
-    clean_name = channel_name.replace(" ", "").replace("(", "").replace(")", "")
-    return f"{LOGO_BASE}{clean_name}.png"
-
-def classify_channel(name):
-    """频道分组：央视 > 卫视 > 河北 > 其他"""
-    name_low = name.lower()
-    if any(k in name_low for k in RULE_CCTV):
-        return "📺 央视频道"
-    elif any(k in name_low for k in RULE_WEISHI):
-        return "📡 卫视频道"
-    elif any(k in name_low for k in RULE_HEBEI):
-        return "🏠 河北本地"
-    else:
-        return "🔍 其他频道"
-
-def parse_name_and_url(raw_line):
-    """拆分 频道名,直播源（适配 名称,地址 格式纯文本）"""
-    if "," in raw_line:
-        name, url = raw_line.split(",", 1)
-        return name.strip(), url.strip()
-    # 无逗号时，频道名=该行内容
-    return raw_line.strip(), raw_line.strip()
-
-def main():
-    today = date.today().strftime("%Y-%m-%d")
-    out_dir = "output"
-    if not os.path.exists(out_dir):
-        os.mkdir(out_dir)
-    out_file = os.path.join(out_dir, f"live_{today}.m3u")
-
-    # 1. 获取下级链接
-    sub_links = get_sub_links()
-    print(f"获取下级链接数量: {len(sub_links)}")
-    if not sub_links:
-        print("未找到目标链接，程序退出")
-        return
-
-    # 2. 纯文本提取所有直播源
-    all_raw_lines = []
-    for url in sub_links:
-        lines = extract_live_source(url)
-        all_raw_lines.extend(lines)
-    # 去重
-    all_raw_lines = list(set(all_raw_lines))
-    print(f"纯文本提取直播源总数: {len(all_raw_lines)}")
-
-    # 3. 初始化分组
-    group_dict = {
-        "📺 央视频道": [],
-        "📡 卫视频道": [],
-        "🏠 河北本地": [],
-        "🔍 其他频道": []
-    }
-
-    # 解析每行、分类、匹配台标
-    for line in all_raw_lines:
-        ch_name, live_url = parse_name_and_url(line)
-        group = classify_channel(ch_name)
-        logo = get_logo_url(ch_name)
-        group_dict[group].append((ch_name, logo, live_url))
-
-    # 4. 生成标准M3U（带分组、台标、EPG）
-    m3u_content = [
-        "#EXTM3U",
-        f'#EXT-X-STREAM-INF:tvg-url="{EPG_URL}"',
-        ""
-    ]
-
-    for group_title, items in group_dict.items():
-        if not items:
-            continue
-        m3u_content.append(f"# ===== {group_title} =====")
-        for name, logo, src in items:
-            ext_inf = f'#EXTINF:-1 tvg-name="{name}" tvg-logo="{logo}" group-title="{group_title}",{name}'
-            m3u_content.append(ext_inf)
-            m3u_content.append(src)
-        m3u_content.append("")
-
-    # 写入文件
-    with open(out_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(m3u_content))
-
-    print(f"✅ 完成！文件已输出至: {out_file}")
+        print(f"抓取过程发生错误: {e}")
+    finally:
+        driver.quit()
 
 if __name__ == "__main__":
-    main()
+    scrape_and_generate_m3u()
