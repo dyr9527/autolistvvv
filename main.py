@@ -1,119 +1,167 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import requests
+import gzip
 from bs4 import BeautifulSoup
-import re
+from urllib.parse import urljoin
+from datetime import date
 import os
-import time
 
-# ================= 配置区 =================
-LIST_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
-OUTPUT_FILE = "output/live_channels.m3u"
+# ===================== 全局配置 =====================
+MAIN_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
+BASE_DOMAIN = "http://nn.7x9d.cn"
+FILTER_OPERATOR = "河北-电信"
+FILTER_DATE = "2026-06-12"
 
-# === 筛选条件 (请根据实际情况修改) ===
-TARGET_ISP = "河北-电信"
-TARGET_DATE = "2026-06-12"  # 只要收录时间是这一天的
+# 台标 & EPG
+LOGO_BASE = "https://raw.githubusercontent.com/fanmingming/live/main/tv/"
+EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
 
-# 模拟浏览器请求头 (必须加，否则容易被拦截)
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'http://nn.7x9d.cn/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
 }
 
+# 分类关键词
+RULE_CCTV = ["央视", "CCTV"]
+RULE_WEISHI = ["卫视"]
+RULE_HEBEI = ["河北"]
+# ====================================================
 
-def find_and_fetch_source():
-    """
-    主逻辑：寻找符合条件的条目，并进入下级页面抓取
-    """
-    print(f"正在连接列表页...")
-
+def get_sub_links():
+    """抓取符合条件的下级链接"""
     try:
-        # 增加超时时间到 30 秒，防止 GitHub Actions 网络波动导致直接报错
-        response = requests.get(LIST_URL, headers=HEADERS, timeout=30)
-        response.encoding = 'utf-8'  # 强制指定编码，防止乱码
-        soup = BeautifulSoup(response.text, 'html.parser')
+        res = requests.get(MAIN_URL, headers=HEADERS, timeout=20)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+        sub_links = []
+
+        for elem in soup.find_all(True):
+            txt = elem.get_text(strip=True)
+            if FILTER_OPERATOR in txt and FILTER_DATE in txt:
+                a_tag = elem.find_previous("a") or elem.find("a")
+                if a_tag and a_tag.get("href"):
+                    full_url = urljoin(BASE_DOMAIN, a_tag["href"])
+                    sub_links.append(full_url)
+        return list(set(sub_links))
     except Exception as e:
-        print(f"[错误] 无法连接列表页: {e}")
-        return None
+        print(f"抓取下级链接失败: {e}")
+        return []
 
-    # 假设每个条目都在一个大的容器里，比如 div 或 tr
-    # 这里我们遍历所有的 <a> 标签，因为蓝色框通常是链接
-    # 如果结构很特殊，可能需要遍历 div
-    all_links = soup.find_all('a')
-
-    target_url = None
-
-    for link in all_links:
-        # 1. 检查这个链接是否有效 (href 不能为空)
-        href = link.get('href')
-        if not href:
-            continue
-
-        # 2. 获取该链接周围的文本内容，或者其父级容器的文本
-        # 很多老网站结构是：<a href="...">蓝色框</a> <br> 河北-电信 ...
-        # 所以我们看 link.parent (父级) 的文本内容
-        parent_text = link.parent.get_text()
-
-        # 3. 严格匹配条件
-        if TARGET_ISP in parent_text and TARGET_DATE in parent_text:
-            print(f"[成功] 找到目标！")
-            print(f"   运营商: {TARGET_ISP}")
-            print(f"   日期: {TARGET_DATE}")
-            print(f"   原始链接: {href}")
-
-            # 处理相对路径 (例如 href="xzjd3.php?id=xxx")
-            if href.startswith('http'):
-                target_url = href
-            else:
-                # 拼接成完整 URL
-                base_url = LIST_URL.rsplit('/', 1)[0]
-                target_url = f"{base_url}/{href}"
-
-            break  # 找到第一个就停止
-
-    if not target_url:
-        print("[失败] 未找到符合条件的链接，请检查日期或运营商名称是否完全一致。")
-        return None
-
-    # --- 第二步：进入下级页面抓取直播源 ---
-    print(f"\n正在进入下级页面获取直播源: {target_url}")
+def extract_live_source(link):
+    """【修改点】纯文本整行提取，不判断协议，只取有效非空行"""
     try:
-        # 再次请求下级页面
-        res_detail = requests.get(target_url, headers=HEADERS, timeout=30)
-        res_detail.encoding = 'utf-8'
-
-        # 假设下级页面直接就是 m3u 文本，或者是包含 m3u 链接的网页
-        # 这里直接返回内容，你可以根据实际情况解析
-        content = res_detail.text
-
-        # 简单的判断：如果内容包含 #EXTM3U，说明直接就是播放列表
-        if '#EXTM3U' in content or '.m3u8' in content or '.ts' in content:
-            print("[成功] 获取到直播源内容！")
-            return content
-        else:
-            # 如果不是直接文本，可能还需要再次解析 HTML 找链接
-            # 这里为了通用，先打印前 200 个字符让你看看是什么
-            print(f"[提示] 下级页面内容预览:\n{content[:200]}...")
-            return content  # 暂时直接返回，你可以后续优化
-
+        res = requests.get(link, headers=HEADERS, timeout=20)
+        res.raise_for_status()
+        soup = BeautifulSoup(res.text, "html.parser")
+        sources = []
+        # 遍历所有文本节点，提取每行纯文本
+        all_text = soup.get_text(separator="\n")
+        for line in all_text.splitlines():
+            line = line.strip()
+            # 过滤空行、注释行
+            if line and not line.startswith(("#", "//")):
+                sources.append(line)
+        return sources
     except Exception as e:
-        print(f"[错误] 进入下级页面失败: {e}")
-        return None
+        print(f"解析 {link} 失败: {e}")
+        return []
 
+def get_logo_url(channel_name):
+    """拼接台标地址"""
+    clean_name = channel_name.replace(" ", "").replace("(", "").replace(")", "")
+    return f"{LOGO_BASE}{clean_name}.png"
 
-def save_to_file(content):
-    """保存文件"""
-    if not content:
+def classify_channel(name):
+    """频道分组：央视 > 卫视 > 河北 > 其他"""
+    name_low = name.lower()
+    if any(k in name_low for k in RULE_CCTV):
+        return "📺 央视频道"
+    elif any(k in name_low for k in RULE_WEISHI):
+        return "📡 卫视频道"
+    elif any(k in name_low for k in RULE_HEBEI):
+        return "🏠 河北本地"
+    else:
+        return "🔍 其他频道"
+
+def download_epg():
+    """加载EPG地址"""
+    try:
+        resp = requests.get(EPG_URL, timeout=20)
+        with open("epg_temp.xml.gz", "wb") as f:
+            f.write(resp.content)
+        return EPG_URL
+    except:
+        return ""
+
+def parse_name_and_url(raw_line):
+    """拆分 频道名,直播源（适配 名称,地址 格式纯文本）"""
+    if "," in raw_line:
+        name, url = raw_line.split(",", 1)
+        return name.strip(), url.strip()
+    # 无逗号时，频道名=该行内容
+    return raw_line.strip(), raw_line.strip()
+
+def main():
+    today = date.today().strftime("%Y-%m-%d")
+    out_dir = "output"
+    if not os.path.exists(out_dir):
+        os.mkdir(out_dir)
+    out_file = os.path.join(out_dir, f"live_{today}.m3u")
+
+    # 1. 获取下级链接
+    sub_links = get_sub_links()
+    print(f"获取下级链接数量: {len(sub_links)}")
+    if not sub_links:
+        print("未找到目标链接，程序退出")
         return
 
-    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print(f"\n[完成] 直播源已保存到: {OUTPUT_FILE}")
+    # 2. 纯文本提取所有直播源
+    all_raw_lines = []
+    for url in sub_links:
+        lines = extract_live_source(url)
+        all_raw_lines.extend(lines)
+    # 去重
+    all_raw_lines = list(set(all_raw_lines))
+    print(f"纯文本提取直播源总数: {len(all_raw_lines)}")
 
+    # 3. 获取EPG
+    epg_link = download_epg()
+
+    # 4. 初始化分组
+    group_dict = {
+        "📺 央视频道": [],
+        "📡 卫视频道": [],
+        "🏠 河北本地": [],
+        "🔍 其他频道": []
+    }
+
+    # 解析每行、分类、匹配台标
+    for line in all_raw_lines:
+        ch_name, live_url = parse_name_and_url(line)
+        group = classify_channel(ch_name)
+        logo = get_logo_url(ch_name)
+        group_dict[group].append((ch_name, logo, live_url))
+
+    # 5. 生成标准M3U（带分组、台标、EPG）
+    m3u_content = [
+        "#EXTM3U",
+        f'#EXT-X-STREAM-INF:tvg-url="{epg_link}"',
+        ""
+    ]
+
+    for group_title, items in group_dict.items():
+        if not items:
+            continue
+        m3u_content.append(f"# ===== {group_title} =====")
+        for name, logo, src in items:
+            ext_inf = f'#EXTINF:-1 tvg-name="{name}" tvg-logo="{logo}" group-title="{group_title}",{name}'
+            m3u_content.append(ext_inf)
+            m3u_content.append(src)
+        m3u_content.append("")
+
+    # 写入文件
+    with open(out_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(m3u_content))
+
+    print(f"✅ 完成！文件已输出至: {out_file}")
 
 if __name__ == "__main__":
-    source_content = find_and_fetch_source()
-    save_to_file(source_content)
+    main()
