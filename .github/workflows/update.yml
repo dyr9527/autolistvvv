@@ -1,50 +1,79 @@
-name: 更新酒店源
+name: Update IPTV List
 
 on:
+  # 每天早上 6:00 和晚上 18:00 自动运行 (北京时间)
   schedule:
-    - cron: '0 1 * * *'   # UTC 1:00 = 北京时间 9:00
-    - cron: '0 5 * * *'   # UTC 5:00 = 北京时间 13:00
-    - cron: '0 9 * * *'   # UTC 9:00 = 北京时间 17:00
+    - cron: '0 22 * * *'  # UTC 22:00 = 北京时间 06:00
+    - cron: '0 10 * * *'  # UTC 10:00 = 北京时间 18:00
+
+  # 允许手动点击按钮运行
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  update-iptv:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # 1. 检出代码
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false # 避免权限冲突
 
-      - name: Setup Python
+      # 2. 设置 Python 环境
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
-      - name: Install Dependencies
+      # 3. 安装依赖库
+      - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 lxml
 
-      - name: Run Scraper
+      # 4. 运行爬虫脚本 (带重试机制)
+      # 这里使用了简单的 shell 循环来防止偶尔的网络超时导致任务直接挂掉
+      - name: Run Scraper Script
+        id: scraper
         run: |
-          python main.py
+          echo "🚀 开始执行抓取任务..."
+          max_retries=3
+          count=0
+          success=false
 
-      - name: Commit and Push
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          if [ -f "kaniptv.m3u" ] && [ -s "kaniptv.m3u" ]; then
-            git add kaniptv.m3u
-            if ! git diff --cached --quiet; then
-              git commit -m "📅 自动更新酒店源 $(date +'%Y-%m-%d %H:%M:%S')"
-              git push
+          while [ $count -lt $max_retries ]; do
+            echo "🔄 尝试第 $((count+1)) 次运行..."
+            if python main.py; then
+              echo "✅ 脚本运行成功！"
+              success=true
+              break
             else
-              echo "📌 文件内容无变化，跳过提交"
+              echo "❌ 脚本运行失败，等待 30 秒后重试..."
+              count=$((count+1))
+              sleep 30
             fi
-          else
-            echo "❌ 输出文件不存在或为空"
+          done
+
+          if [ "$success" = false ]; then
+            echo "💀 达到最大重试次数，任务终止。"
             exit 1
           fi
+
+      # 5. 检查文件是否生成
+      - name: Check output file
+        run: |
+          if [ ! -f "iptv.m3u" ]; then
+            echo "⚠️ 警告: iptv.m3u 未生成，可能是源站无数据或筛选条件过严。"
+            # 创建一个空文件或保持原样，视情况而定，这里选择不中断流程但记录日志
+          else
+            echo "📄 iptv.m3u 文件已生成，大小: $(wc -c < iptv.m3u) bytes"
+          fi
+
+      # 6. 提交并推送更改到仓库
+      - name: Commit and Push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto Update: IPTV list updated on $(date '+%Y-%m-%d %H:%M:%S')"
+          file_pattern: "iptv.m3u"
+          branch: main # 如果你的主分支叫 master，请改为 master
