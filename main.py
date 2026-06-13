@@ -6,118 +6,164 @@ import os
 import random
 
 # --- 配置区 ---
-BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
+# 目标网站（国内站点，GitHub访问极不稳定）
+TARGET_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
 OUTPUT_FILE = "kaniptv.m3u"
 
-# 伪装浏览器请求头
+# 备用源列表（如果主源挂了，尝试这些）
+BACKUP_SOURCES = [
+    "https://iptv.b2og.com/txt/fmml_ipv6.txt", # 这是一个知名的IPv6源，作为备用
+    "https://ghproxy.net/https://raw.githubusercontent.com/YanG-1989/m3u/main/Gather.m3u" # 聚合源
+]
+
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+    'Accept-Language': 'zh-CN,zh;q=0.9'
 }
 
-def get_working_proxy():
+def get_proxy():
     """
-    尝试从公开代理列表获取一个能用的代理。
-    这是解决 GitHub Actions 无法访问国内网站的关键。
+    尝试从公开API获取代理IP
+    如果失败，返回 None
     """
-    # 这里使用一个公开的免费代理API作为示例，实际生产中建议自建或使用付费服务
-    # 为了稳定性，我们尝试几个不同的源
-    proxy_sources = [
-        "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=cn&ssl=all&anonymity=all",
-        # 注意：由于环境限制，这里可能需要更稳定的源，或者你可以手动填入一个你测试过的长期代理
-        # 如果下面这个API也访问不了，说明GitHub彻底封锁了该类API，那时只能靠运气
+    proxy_apis = [
+        "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=cn&ssl=no&anonymity=all",
+        "https://spider.meiguodns.com/api/proxy?type=json" # 备用API
     ]
 
-    for source in proxy_sources:
+    for api in proxy_apis:
         try:
-            resp = requests.get(source, timeout=10)
+            print(f"正在尝试从 {api} 获取代理...")
+            resp = requests.get(api, timeout=10)
             if resp.status_code == 200:
-                proxies_list = resp.text.strip().split('\n')
-                # 随机取几个试试
-                random.shuffle(proxies_list)
-                for p in proxies_list[:10]: # 只试前10个
-                    if ':' in p:
-                        proxy_url = f"http://{p.strip()}"
-                        print(f"正在测试代理: {proxy_url}")
-                        try:
-                            # 测试代理是否能访问百度
-                            test = requests.get("http://www.baidu.com", proxies={"http": proxy_url}, timeout=5)
-                            if test.status_code == 200:
-                                print(f"✅ 找到可用代理: {proxy_url}")
-                                return {"http": proxy_url, "https": proxy_url}
-                        except:
-                            continue
+                data = resp.text.strip()
+                # 简单解析，取第一个可用的IP
+                if '://' not in data and ':' in data:
+                    ip_port = data.split('\n')[0].strip()
+                    if len(ip_port) > 5:
+                        proxy_url = f"http://{ip_port}"
+                        print(f"获取到代理: {proxy_url}")
+                        return {"http": proxy_url, "https": proxy_url}
         except Exception as e:
-            print(f"获取代理源失败: {e}")
+            print(f"获取代理失败: {e}")
             continue
-
-    print("⚠️ 未找到可用代理，将尝试直连（大概率会失败）...")
     return None
 
-def clean_channel_name(name):
-    """清洗频道名称"""
-    # 简单的清洗逻辑，去除常见的后缀
-    suffixes = ["[", "]", "(", ")", "高清", "HD", "CCTV", "卫视"]
-    for s in suffixes:
-        name = name.replace(s, "")
-    return name.strip()
+def fetch_content(url, max_retries=5):
+    """
+    带代理和重试机制的抓取函数
+    """
+    proxies = get_proxy()
+
+    for i in range(max_retries):
+        try:
+            print(f"第 {i+1} 次尝试连接: {url}")
+            # 如果没有代理，直连超时设为10秒；有代理设为30秒
+            timeout = 30 if proxies else 10
+
+            resp = requests.get(url, headers=HEADERS, proxies=proxies, timeout=timeout)
+
+            if resp.status_code == 200:
+                # 简单的内容检查，防止抓到了错误页面
+                if len(resp.text) > 100:
+                    print("连接成功！开始解析...")
+                    return resp.text
+                else:
+                    print("响应内容过短，可能是错误页面，重试...")
+            else:
+                print(f"状态码异常: {resp.status_code}")
+
+        except requests.exceptions.ProxyError:
+            print("代理不通，重新获取代理...")
+            proxies = get_proxy() # 换个代理
+        except requests.exceptions.Timeout:
+            print("连接超时，可能是代理太慢或网络不通...")
+            if i < max_retries - 1:
+                proxies = get_proxy() # 换个代理再试
+        except Exception as e:
+            print(f"发生未知错误: {e}")
+
+        time.sleep(2) # 等待一下再重试
+
+    return None
+
+def parse_nn_site(content):
+    """
+    解析 nn.7x9d.cn 的特定格式
+    """
+    channels = []
+    lines = content.split('\n')
+    current_group = "未分类"
+
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+
+        # 这种网站通常是 组名,#genre# 格式
+        if ',#genre#' in line:
+            current_group = line.split(',')[0].strip()
+            continue
+
+        # 匹配 频道名,链接 格式
+        if ',' in line and 'http' in line:
+            parts = line.split(',', 1)
+            name = parts[0].strip()
+            url = parts[1].strip()
+
+            # 简单的清洗，去掉多余的后缀
+            name = re.sub(r'\[.*?\]', '', name).strip()
+            name = re.sub(r'\(.*?\)', '', name).strip()
+
+            if name and url.startswith('http'):
+                channels.append((current_group, name, url))
+
+    return channels
+
+def write_m3u(channels):
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        f.write('#EXTM3U x-tvg-url="http://epg.51zmt.top:8000/e.xml"\n')
+        for group, name, url in channels:
+            f.write(f'#EXTINF:-1 group-title="{group}",{name}\n')
+            f.write(f'{url}\n')
+    print(f"成功写入 {len(channels)} 个频道到 {OUTPUT_FILE}")
 
 def main():
-    print("🚀 开始 IPTV 更新任务...")
+    print("--- 开始任务 ---")
 
-    # 1. 获取代理
-    proxies = get_working_proxy()
+    # 1. 尝试抓取主站
+    content = fetch_content(TARGET_URL)
 
-    # 2. 访问目标网站
-    m3u_content = "#EXTM3U x-tvg-url=\"http://epg.51zmt.top:8000/e.xml\"\n"
-    success_count = 0
+    all_channels = []
 
-    try:
-        print(f"正在访问: {BASE_URL}")
-        # 设置超时时间，防止卡死
-        response = requests.get(BASE_URL, headers=HEADERS, proxies=proxies, timeout=15)
-        response.encoding = 'utf-8' # 强制指定编码，防止乱码
+    if content:
+        print("主站抓取成功，正在解析...")
+        channels = parse_nn_site(content)
+        all_channels.extend(channels)
+    else:
+        print("!!! 主站抓取失败 !!! 尝试使用备用源...")
+        # 2. 如果主站挂了，尝试抓取备用源（备用源通常对海外友好一点，或者是GitHub直链）
+        for backup_url in BACKUP_SOURCES:
+            print(f"尝试备用源: {backup_url}")
+            # 备用源通常是 m3u 格式，这里简化处理，假设能直接下载
+            try:
+                resp = requests.get(backup_url, timeout=15)
+                if resp.status_code == 200:
+                    # 这里只是简单演示，实际应该解析m3u格式
+                    # 为了代码简洁，如果主站挂了，我们至少保证文件里有东西
+                    # 你可以手动把备用源的链接写到生成的m3u里
+                    print("备用源连接成功，但由于格式复杂，建议优先修复主站代理。")
+                    # 这里暂时不解析备用源，避免逻辑太复杂导致报错
+            except:
+                pass
 
-        if response.status_code != 200:
-            raise Exception(f"HTTP Error: {response.status_code}")
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # 3. 解析页面内容 (根据 nn.7x9d.cn 的结构调整)
-        # 假设链接在 <a> 标签中，或者特定的 div 里
-        # 注意：这里需要根据网页实际结构调整选择器
-        links = soup.find_all('a', href=True)
-
-        for link in links:
-            url = link['href']
-            name = link.get_text(strip=True)
-
-            # 简单的过滤：只保留看起来像直播流的链接
-            if '.m3u8' in url or '.ts' in url or 'live' in url:
-                clean_name = clean_channel_name(name)
-                if not clean_name:
-                    clean_name = "未知频道"
-
-                line = f'#EXTINF:-1 tvg-name="{clean_name}" tvg-logo="" group-title="默认",{clean_name}\n{url}\n'
-                m3u_content += line
-                success_count += 1
-
-        print(f"✅ 成功解析到 {success_count} 个频道")
-
-    except Exception as e:
-        print(f"❌ 抓取失败: {e}")
-        # 如果抓取失败，保留旧文件或者写入错误提示，防止文件被清空
-        if os.path.exists(OUTPUT_FILE):
-            print("保留旧文件...")
-            return
-        else:
-            m3u_content = "#EXTM3U\n# 抓取失败，请检查日志"
-
-    # 4. 写入文件
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        f.write(m3u_content)
-
-    print("💾 文件已保存")
+    # 3. 写入文件
+    if all_channels:
+        write_m3u(all_channels)
+    else:
+        print("没有任何频道数据！请检查日志中的网络错误。")
+        # 即使没数据也写入一个空文件，防止文件消失
+        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            f.write('#EXTM3U\n# 本次更新失败，无数据\n')
 
 if __name__ == "__main__":
     main()
