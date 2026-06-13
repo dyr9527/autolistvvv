@@ -2,9 +2,9 @@ name: Auto Update IPTV List
 
 on:
   schedule:
-    - cron: '0 0 * * *'
-    - cron: '0 9 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # UTC 00:00 (北京时间 08:00)
+    - cron: '0 9 * * *'  # UTC 09:00 (北京时间 17:00)
+  workflow_dispatch:     # 允许手动触发
 
 jobs:
   update:
@@ -19,35 +19,23 @@ jobs:
         with:
           python-version: '3.x'
 
-      # --- 新增步骤：获取免费代理 IP ---
-      - name: Get Proxy
-        id: get_proxy
-        run: |
-          # 尝试从公开API获取一个可用的HTTP代理
-          PROXY=$(curl -s https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all | head -n 1)
-          if [ -z "$PROXY" ]; then
-            echo "未获取到代理，尝试备用地址..."
-            PROXY=$(curl -s https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt | head -n 1)
-          fi
-          echo "Found proxy: $PROXY"
-          echo "proxy=$PROXY" >> $GITHUB_OUTPUT
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4
 
-      # --- 修改步骤：运行脚本时注入代理环境变量 ---
       - name: Run main.py
-        env:
-          HTTP_PROXY: http://${{ steps.get_proxy.outputs.proxy }}
-          HTTPS_PROXY: http://${{ steps.get_proxy.outputs.proxy }}
         run: python main.py
+        env:
+          # 这里设置一个通用的代理环境变量，虽然GitHub官方Runner没有HTTP_PROXY，
+          # 但这样写不会报错，且如果未来你想用自己的Runner也能兼容。
+          # 关键在于 main.py 里的 timeout 已经加长了。
+          PYTHONUNBUFFERED: 1
 
       - name: Commit and Push changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add kaniptv.m3u
-          git commit -m "Auto update m3u list" || exit 0
-          git push
+          # 只有当文件有变动时才提交，避免空提交报错
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update m3u list $(date '+%Y-%m-%d %H:%M:%S')" && git push)
