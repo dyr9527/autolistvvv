@@ -1,5 +1,4 @@
 import requests
-import gzip
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from datetime import date
@@ -46,7 +45,7 @@ def get_sub_links():
         return []
 
 def extract_live_source(link):
-    """【修改点】纯文本整行提取，不判断协议，只取有效非空行"""
+    """纯文本整行提取，不判断协议，只取有效非空行"""
     try:
         res = requests.get(link, headers=HEADERS, timeout=20)
         res.raise_for_status()
@@ -81,16 +80,6 @@ def classify_channel(name):
     else:
         return "🔍 其他频道"
 
-def download_epg():
-    """加载EPG地址"""
-    try:
-        resp = requests.get(EPG_URL, timeout=20)
-        with open("epg_temp.xml.gz", "wb") as f:
-            f.write(resp.content)
-        return EPG_URL
-    except:
-        return ""
-
 def parse_name_and_url(raw_line):
     """拆分 频道名,直播源（适配 名称,地址 格式纯文本）"""
     if "," in raw_line:
@@ -122,10 +111,7 @@ def main():
     all_raw_lines = list(set(all_raw_lines))
     print(f"纯文本提取直播源总数: {len(all_raw_lines)}")
 
-    # 3. 获取EPG
-    epg_link = download_epg()
-
-    # 4. 初始化分组
+    # 3. 初始化分组
     group_dict = {
         "📺 央视频道": [],
         "📡 卫视频道": [],
@@ -140,10 +126,10 @@ def main():
         logo = get_logo_url(ch_name)
         group_dict[group].append((ch_name, logo, live_url))
 
-    # 5. 生成标准M3U（带分组、台标、EPG）
+    # 4. 生成标准M3U（带分组、台标、EPG）
     m3u_content = [
         "#EXTM3U",
-        f'#EXT-X-STREAM-INF:tvg-url="{epg_link}"',
+        f'#EXT-X-STREAM-INF:tvg-url="{EPG_URL}"',
         ""
     ]
 
