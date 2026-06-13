@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
+import os
 
 # --- 配置区 ---
 BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
@@ -32,12 +33,12 @@ HEADERS = {
 # ==================== 第一阶段：抓取原始直播源 ====================
 
 def get_telecom_links(page_url):
-    """
-    解析上一级页面，找到所有"河北-电信"对应的蓝色按钮链接
-    """
+    """解析入口页面，找到所有"河北-电信"对应的蓝色按钮链接"""
     print(f"🔍 正在分析入口页面: {page_url}")
     try:
-        resp = requests.get(page_url, headers=HEADERS, timeout=10)
+        # 增加 retries 应对网络波动
+        session = requests.Session()
+        resp = session.get(page_url, headers=HEADERS, timeout=30)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
@@ -61,16 +62,15 @@ def get_telecom_links(page_url):
         print(f"❌ 解析入口页面失败: {e}")
         return []
 
-
 def fetch_playlist(url):
-    """
-    访问蓝色按钮的链接，获取纯文本直播源
-    """
+    """访问蓝色按钮的链接，获取纯文本直播源"""
     try:
         headers_with_referer = HEADERS.copy()
         headers_with_referer['Referer'] = BASE_URL
 
-        resp = requests.get(url, headers=headers_with_referer, timeout=15)
+        session = requests.Session()
+        resp = session.get(url, headers=headers_with_referer, timeout=30)
+
         if resp.encoding == 'ISO-8859-1':
             resp.encoding = 'utf-8'
 
@@ -85,15 +85,11 @@ def fetch_playlist(url):
         print(f"❌ 获取 {url} 失败: {e}")
         return ""
 
-
 def parse_raw_content(content):
-    """
-    解析纯文本，返回频道列表 [{name: xxx, url: xxx}, ...]
-    支持M3U格式和简单CSV格式
-    """
+    """解析纯文本，返回频道列表"""
     channels = []
     lines = content.replace('<br>', '\n').replace('<br/>', '\n').splitlines()
-    
+
     current_extinf = ""
 
     for line in lines:
@@ -128,36 +124,34 @@ def parse_raw_content(content):
 
     return channels
 
-
 # ==================== 第二阶段：分类、台标、EPG处理 ====================
 
 def extract_logo_name(channel_name):
     """从频道名称中提取用于匹配台标的关键词"""
     name = channel_name.strip()
-    
+
     if name.upper().startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(\d+\+?)", name.upper())
+        match = re.search(r"CCTV[-\s]?(\d+?)", name.upper())
         if match:
             num = match.group(1).replace("+", "PLUS")
             return f"CCTV{num}"
-    
+
     if "卫视" in name:
         match = re.search(r"(.+?)卫视", name)
         if match:
             return match.group(1).strip()
-    
+
     clean_name = name
     for word in SUFFIX_WORDS:
         clean_name = clean_name.replace(word, "")
     clean_name = clean_name.strip()
-    
-    return clean_name if clean_name else name
 
+    return clean_name if clean_name else name
 
 def get_channel_group(channel_name):
     """根据频道名称判断分组"""
     name = channel_name.strip()
-    
+
     if name.upper().startswith("CCTV"):
         return "央视频道"
     elif "卫视" in name:
@@ -175,17 +169,16 @@ def get_channel_group(channel_name):
     else:
         return "其他"
 
-
 def get_epg_id(channel_name):
     """生成EPG节目单匹配ID"""
     name = channel_name.strip().upper()
-    
+
     if name.startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(\d+\+?)", name)
+        match = re.search(r"CCTV[-\s]?(\d+?)", name)
         if match:
             num = match.group(1).replace("+", "PLUS")
             return f"CCTV{num}"
-    
+
     if "卫视" in name:
         match = re.search(r"(.+?)卫视", name)
         if match:
@@ -201,20 +194,14 @@ def get_epg_id(channel_name):
                 "贵州": "贵州卫视", "云南": "云南卫视", "海南": "海南卫视"
             }
             return province_map.get(province, f"{province}卫视")
-    
+
     if "河北" in name:
         return name.replace("高清", "").replace("HD", "").strip()
-    
+
     return name
 
-
 def enrich_channels(raw_channels):
-    """
-    对原始频道列表进行增强处理：
-    - 去重合并（同名频道合并URL）
-    - 注入分组、台标、EPG信息
-    返回结构: {频道名: {group: xx, logo: xx, epg: xx, urls: [url1, url2]}}
-    """
+    """对原始频道列表进行增强处理"""
     merged = {}
 
     for ch in raw_channels:
@@ -228,12 +215,11 @@ def enrich_channels(raw_channels):
                 'epg': get_epg_id(name),
                 'urls': []
             }
-        
+
         if url not in merged[name]['urls']:
             merged[name]['urls'].append(url)
 
     return merged
-
 
 # ==================== 第三阶段：生成M3U文件 ====================
 
@@ -242,13 +228,13 @@ def generate_m3u(enriched_channels, output_file):
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
         # 文件头，声明EPG地址
         f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
-        
+
         total_count = 0
         for name, info in enriched_channels.items():
             for idx, url in enumerate(info['urls']):
                 suffix = f" 源{idx+1}" if len(info['urls']) > 1 else ""
                 display_name = f"{name}{suffix}"
-                
+
                 extinf = (
                     f'#EXTINF:-1 '
                     f'group-title="{info["group"]}" '
@@ -262,7 +248,6 @@ def generate_m3u(enriched_channels, output_file):
 
     return total_count
 
-
 # ==================== 主程序 ====================
 
 def main():
@@ -273,18 +258,21 @@ def main():
     # --- 第一阶段：抓取原始直播源 ---
     print("\n【第一阶段】抓取原始直播源...")
     links = get_telecom_links(BASE_URL)
-    
+
     if not links:
         print("❌ 未找到任何电信源链接")
+        # 即使没找到也生成一个空文件，防止后续报错
+        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            f.write('#EXTM3U\n')
         return
 
     print(f"\n✅ 共找到 {len(links)} 个电信源，开始逐个抓取...\n")
-    
+
     all_raw_channels = []
     for i, link in enumerate(links, 1):
         print(f"--- [{i}/{len(links)}] 正在抓取: {link} ---")
         content = fetch_playlist(link)
-        
+
         if not content:
             print("   ❌ 获取失败，跳过")
             continue
@@ -297,6 +285,9 @@ def main():
 
     if not all_raw_channels:
         print("\n⚠️ 未能解析出任何频道数据")
+        # 生成空文件占位
+        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            f.write('#EXTM3U\n')
         return
 
     print(f"\n✅ 第一阶段完成！共获取原始频道 {len(all_raw_channels)} 条")
@@ -319,7 +310,6 @@ def main():
     print(f"   总线路数: {total} 条")
     print(f"   EPG地址: {EPG_URL}")
     print("=" * 50)
-
 
 if __name__ == '__main__':
     main()
