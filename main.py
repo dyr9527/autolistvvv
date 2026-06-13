@@ -8,7 +8,7 @@ import gzip
 import io
 
 # --- 配置区 ---
-BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=河北"  # 河北专区
+BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=河北"
 OUTPUT_FILE = "kaniptv.m3u"
 LOGO_BASE_URL = "https://raw.githubusercontent.com/fanmingming/live/main/tv/"
 EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
@@ -20,77 +20,54 @@ SUFFIX_WORDS = [
     "科教", "戏曲", "社会与法", "新闻", "音乐"
 ]
 
+# 模拟更真实的浏览器头
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
 }
 
-# ==================== 核心网络模块（修复版：增加直连兜底） ====================
+# ==================== 核心网络模块（优化版） ====================
 
-def get_proxy():
-    """获取代理，如果失败返回 None"""
-    proxy_apis = [
-        "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=cn&ssl=all&anonymity=all",
-    ]
-    for api in proxy_apis:
-        try:
-            resp = requests.get(api, timeout=5)
-            if resp.status_code == 200:
-                proxies_list = resp.text.strip().split('\r\n')
-                if proxies_list:
-                    ip_port = random.choice(proxies_list).strip()
-                    if ':' in ip_port:
-                        return {"http": f"http://{ip_port}", "https": f"http://{ip_port}"}
-        except Exception:
-            continue
-    return None
-
-def safe_request(url, max_retries=4):
+def safe_request(url, max_retries=5):
     """
-    带重试的安全请求
-    策略：先试代理 -> 失败换代理 -> 再失败试直连 -> 最后放弃
+    增强版请求函数：
+    1. 优先直连（GitHub IP 有时反而不被墙）
+    2. 失败后尝试简单的延时重试
+    3. 增加 Referer 伪装
     """
-    # 第一次尝试使用代理
-    current_proxy = get_proxy()
+    # 动态设置 Referer，假装是从首页点进去的
+    headers = HEADERS.copy()
+    if "xzjd2.php" in url:
+        headers['Referer'] = "http://nn.7x9d.cn/"
+    else:
+        headers['Referer'] = "http://nn.7x9d.cn/xzjd2.php?id=河北"
 
     for attempt in range(max_retries):
-        use_proxy_str = "使用代理" if current_proxy else "直连"
-        print(f"   🔄 正在请求 [{use_proxy_str}] (尝试 {attempt+1}/{max_retries})...")
-
         try:
-            # 如果是直连，适当增加一点超时时间
-            timeout_val = 20 if not current_proxy else 15
+            print(f"   🔄 正在请求 (尝试 {attempt+1}/{max_retries})...")
 
-            resp = requests.get(
-                url,
-                headers=HEADERS,
-                proxies=current_proxy,
-                timeout=timeout_val
-            )
+            # 这里的 timeout 设置大一点，防止稍微卡顿就断开
+            resp = requests.get(url, headers=headers, timeout=20)
 
             if resp.status_code == 200:
+                # 简单的内容校验
                 if len(resp.text) > 100:
                     return resp.text
                 else:
-                    print(f"   ⚠️ 响应内容过短，可能被拦截")
-                    # 内容不对，强制切换模式
-                    current_proxy = None if current_proxy else get_proxy()
+                    print(f"   ⚠️ 响应内容过短，可能被拦截...")
             else:
                 print(f"   ⚠️ 状态码: {resp.status_code}")
-                # 状态码不对，也尝试切换
-                current_proxy = None if current_proxy else get_proxy()
 
         except requests.exceptions.RequestException as e:
-            print(f"   ❌ 请求失败: {type(e).__name__}")
-            # 关键修复：如果当前是代理且失败了，下一次尝试直连 (None)
-            # 如果当前已经是直连还失败，那就再试一次代理
-            if current_proxy:
-                print("   💡 代理似乎不可用，下次尝试直连...")
-                current_proxy = None
-            else:
-                print("   💡 直连失败，尝试获取新代理...")
-                current_proxy = get_proxy()
+            print(f"   ❌ 请求失败: {e}")
+
+        # 每次失败后随机等待 2-5 秒，避免触发频率限制
+        wait_time = random.uniform(2, 5)
+        print(f"   💤 等待 {wait_time:.1f} 秒后重试...")
+        time.sleep(wait_time)
 
     return None
 
@@ -107,19 +84,18 @@ def get_telecom_links(page_url):
     soup = BeautifulSoup(html, 'html.parser')
     telecom_links = []
 
+    # 筛选条件：运营商为"河北-电信"
     operator_tags = soup.find_all(string=re.compile("河北-电信"))
 
     for tag in operator_tags:
-        parent_text = tag.parent.get_text() if tag.parent else ""
-        if "2026-06-12" not in parent_text:
-            continue
-
         btn = tag.find_previous(name='a')
         if btn and btn.get('href'):
             link = btn['href']
             if not link.startswith('http'):
                 base_domain = "http://nn.7x9d.cn"
                 link = base_domain + "/" + link.lstrip('/')
+
+            # 简单的去重和打印
             ip_text = btn.get_text(strip=True)
             print(f"✅ 发现河北电信源: [{ip_text}] -> {link}")
             telecom_links.append(link)
@@ -234,7 +210,6 @@ def enrich_channels(raw_channels):
 
 def generate_m3u(enriched_channels, output_file):
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        # 写入 EPG 链接
         f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
         total_count = 0
         for name, info in enriched_channels.items():
@@ -272,7 +247,7 @@ def main():
             channels = parse_raw_content(content)
             print(f"   ✅ 解析出 {len(channels)} 个频道")
             all_raw_channels.extend(channels)
-        time.sleep(1)
+        time.sleep(2) # 抓取间隔加长，防止被封
 
     if not all_raw_channels:
         print("\n⚠️ 未能解析出任何频道数据，生成空文件")
