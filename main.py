@@ -2,19 +2,17 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
-import os
 import random
-import gzip
-import io
 
 # --- 配置区 ---
 BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=河北"  # 河北专区
 OUTPUT_FILE = "kaniptv.m3u"
-LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/"
-# 更新为用户提供的 EPG 源
-EPG_SOURCE_URL = "https://epg.zsdc.eu.org/t.xml.gz"
-# 本地解压后的 EPG 文件名
-LOCAL_EPG_FILE = "epg.xml"
+
+# 修改为正确的 Logo Raw 地址
+LOGO_BASE_URL = "https://raw.githubusercontent.com/fanmingming/live/main/tv/"
+
+# 修改为直接使用压缩的 EPG 链接 (更兼容，无需本地解压)
+EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
 
 SUFFIX_WORDS = [
     "高清", "HD", "hd", "4K", "超清", "标清", "SD",
@@ -75,40 +73,6 @@ def safe_request(url, max_retries=3):
 
     return None
 
-# ==================== 新增：EPG 处理模块 ====================
-
-def fetch_and_decompress_epg():
-    """
-    专门用于下载 .gz 压缩的 EPG 并解压保存为本地文件
-    """
-    print(f"⏬ 正在下载并解压 EPG 源: {EPG_SOURCE_URL}")
-    
-    try:
-        # 直接下载二进制内容
-        response = requests.get(EPG_SOURCE_URL, timeout=30)
-        response.raise_for_status()
-
-        # 使用 gzip 解压
-        with gzip.GzipFile(fileobj=io.BytesIO(response.content)) as gz_file:
-            decoded_content = gz_file.read().decode('utf-8')
-
-        # 保存为本地文件
-        with open(LOCAL_EPG_FILE, 'w', encoding='utf-8') as f:
-            f.write(decoded_content)
-
-        print(f"✅ EPG 文件已成功更新: {LOCAL_EPG_FILE}")
-        return LOCAL_EPG_FILE
-
-    except Exception as e:
-        print(f"❌ 处理 EPG 时发生错误: {e}")
-        # 如果出错，尝试直接使用旧的 epg.xml（如果存在）
-        if os.path.exists(LOCAL_EPG_FILE):
-            print(f"ℹ️ 使用现有的本地 EPG 文件: {LOCAL_EPG_FILE}")
-            return LOCAL_EPG_FILE
-        else:
-            print(f"❌ 本地 EPG 文件也不存在，播放器可能无法显示节目单。")
-            return None
-
 # ==================== 业务逻辑 ====================
 
 def get_telecom_links(page_url):
@@ -126,7 +90,7 @@ def get_telecom_links(page_url):
     operator_tags = soup.find_all(string=re.compile("河北-电信"))
 
     for tag in operator_tags:
-        # 检查收录时间是否匹配
+        # 检查收录时间是否匹配 (注意：你当前是2026-06-13，如果网页上是昨天的日期，请相应调整)
         parent_text = tag.parent.get_text() if tag.parent else ""
         if "2026-06-12" not in parent_text:
             continue
@@ -195,7 +159,7 @@ def parse_raw_content(content):
 def extract_logo_name(channel_name):
     name = channel_name.strip()
     if name.upper().startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(\d+?)", name.upper())
+        match = re.search(r"CCTV[-\s]?(.+)", name.upper())
         if match:
             num = match.group(1).replace("+", "PLUS")
             return f"CCTV{num}"
@@ -220,17 +184,38 @@ def get_channel_group(channel_name):
     else: return "其他"
 
 def get_epg_id(channel_name):
+    """
+    这个函数尝试将频道名转换为 EPG 源中使用的 ID 格式。
+    由于 EPG 源是通用的，这里尽量做标准化处理。
+    """
     name = channel_name.strip().upper()
+    
+    # 处理 CCTV
     if name.startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(\d+?)", name)
-        if match: return f"CCTV{match.group(1).replace('+', 'PLUS')}"
+        match = re.search(r"CCTV[-\s]?(.+)", name)
+        if match: 
+            num = match.group(1).replace("+", "PLUS")
+            return f"CCTV{num}"
+    
+    # 处理 卫视
     if "卫视" in name:
         match = re.search(r"(.+?)卫视", name)
         if match:
             province = match.group(1).strip()
-            p_map = {"北京":"BTV","上海":"东方卫视","天津":"天津卫视","重庆":"重庆卫视","湖南":"湖南卫视","浙江":"浙江卫视","江苏":"江苏卫视","广东":"广东卫视","山东":"山东卫视","河南":"河南卫视","河北":"河北卫视","四川":"四川卫视","湖北":"湖北卫视","辽宁":"辽宁卫视","黑龙江":"黑龙江卫视","吉林":"吉林卫视","安徽":"安徽卫视","福建":"福建卫视","江西":"江西卫视","山西":"山西卫视","陕西":"陕西卫视","甘肃":"甘肃卫视","青海":"青海卫视","宁夏":"宁夏卫视","新疆":"新疆卫视","西藏":"西藏卫视","内蒙古":"内蒙古卫视","广西":"广西卫视","贵州":"贵州卫视","云南":"云南卫视","海南":"海南卫视"}
+            # 简单映射，确保格式正确
+            p_map = {
+                "北京": "BTV", "上海": "东方卫视", "天津": "天津卫视", "重庆": "重庆卫视",
+                "湖南": "湖南卫视", "浙江": "浙江卫视", "江苏": "江苏卫视", "广东": "广东卫视",
+                "山东": "山东卫视", "河南": "河南卫视", "河北": "河北卫视", "四川": "四川卫视",
+                "湖北": "湖北卫视", "辽宁": "辽宁卫视", "黑龙江": "黑龙江卫视", "吉林": "吉林卫视",
+                "安徽": "安徽卫视", "福建": "福建卫视", "江西": "江西卫视", "山西": "山西卫视",
+                "陕西": "陕西卫视", "甘肃": "甘肃卫视", "青海": "青海卫视", "宁夏": "宁夏卫视",
+                "新疆": "新疆卫视", "西藏": "西藏卫视", "内蒙古": "内蒙古卫视", "广西": "广西卫视",
+                "贵州": "贵州卫视", "云南": "云南卫视", "海南": "海南卫视"
+            }
             return p_map.get(province, f"{province}卫视")
-    if "河北" in name: return name.replace("高清","").replace("HD","").strip()
+    
+    # 默认返回原名称，期望 EPG 源中包含该名称
     return name
 
 def enrich_channels(raw_channels):
@@ -239,10 +224,12 @@ def enrich_channels(raw_channels):
         name = ch['name']
         url = ch['url']
         if name not in merged:
+            # 使用标准化的 ID 获取 EPG
+            epg_id = get_epg_id(name)
             merged[name] = {
                 'group': get_channel_group(name),
                 'logo': f"{LOGO_BASE_URL}{extract_logo_name(name).replace(' ', '').replace('-', '')}.png",
-                'epg': get_epg_id(name),
+                'epg': epg_id,
                 'urls': []
             }
         if url not in merged[name]['urls']:
@@ -250,9 +237,9 @@ def enrich_channels(raw_channels):
     return merged
 
 def generate_m3u(enriched_channels, output_file):
-    # 写入 M3U 文件时，指向本地解压好的 EPG 文件
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        f.write(f'#EXTM3U x-tvg-url="{LOCAL_EPG_FILE}"\n')
+        # 直接写入压缩的 EPG 链接
+        f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
         total_count = 0
         for name, info in enriched_channels.items():
             for idx, url in enumerate(info['urls']):
@@ -275,13 +262,6 @@ def main():
     print("🚀 河北电信直播源抓取工具 (收录时间: 2026-06-12)")
     print("=" * 50)
 
-    # 1. 先处理 EPG
-    epg_file = fetch_and_decompress_epg()
-    if not epg_file:
-        # 即使 EPG 失败，也继续生成直播源，只是节目单可能为空
-        pass
-
-    # 2. 处理直播源
     links = get_telecom_links(BASE_URL)
     if not links:
         print("❌ 未找到任何链接，程序终止")
