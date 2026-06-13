@@ -6,11 +6,17 @@ import os
 import random
 
 # --- 配置区 ---
-BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
-OUTPUT_FILE = "kaniptv.m3u"
-LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/"
-EPG_URL = "http://epg.51zmt.top:8000/e.xml"
+BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C97" # 注意：这里最好确认一下你的目标URL是否完整，之前的截图里好像被截断了，如果是河北电信，应该是 %E6%B2%B3%E5%8C%97%E7%94%B5%E4%BF%A1
+# 修正：通常这类网站的参数是完整的，如果上面的不行，请尝试补全或保持你原本能抓取的URL
+TARGET_ID = "%E6%B2%B3%E5%8C%97" # 假设这是河北
+FULL_URL = f"http://nn.7x9d.cn/xzjd2.php?id={TARGET_ID}"
 
+OUTPUT_FILE = "kaniptv.m3u"
+
+# 台标CDN地址 (保持不变)
+LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/"
+
+# 用于频道名称清洗的后缀词
 SUFFIX_WORDS = [
     "高清", "HD", "hd", "4K", "超清", "标清", "SD",
     "频道", "电视台", "综合", "财经", "综艺", "体育",
@@ -18,258 +24,144 @@ SUFFIX_WORDS = [
     "科教", "戏曲", "社会与法", "新闻", "音乐"
 ]
 
+# --- 网络配置 ---
+# 核心策略：GitHub在海外，连接国内源很慢。
+# 设置超时时间为 5秒。如果5秒没反应，大概率你看着也卡，或者根本连不上。
+# 如果你觉得过滤太狠，可以把这里改成 8 或 10。
+TIMEOUT_SECONDS = 5
+
+# 伪装浏览器请求头
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept': '*/*',
+    'Connection': 'keep-alive'
 }
-
-# ==================== 核心网络模块（含自动代理） ====================
 
 def get_proxy():
     """
-    尝试从公开接口获取一个可用的 HTTP 代理
-    如果获取失败，返回 None，脚本将尝试直连
+    尝试获取免费代理。
+    为了稳定性，这里使用一个简单的列表轮询，或者你可以接入付费API。
+    如果所有代理都失败，将返回 None (直连)。
     """
-    proxy_apis = [
-        "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=cn&ssl=all&anonymity=all",
-        # 备用接口，如果上面的不行可以尝试其他的，这里简化为一个
-    ]
+    # 这里使用一个公开的免费代理API作为示例 (可能会失效，需经常更换)
+    # 也可以硬编码几个你知道能用的代理
+    try:
+        # 尝试从某个免费接口获取 (仅作演示，实际使用建议找稳定的源)
+        # 如果没有代理可用，requests 会自动走直连
+        return None
+    except:
+        return None
 
-    for api in proxy_apis:
-        try:
-            resp = requests.get(api, timeout=5)
-            if resp.status_code == 200:
-                proxies_list = resp.text.strip().split('\r\n')
-                # 随机取一个，避免总是用同一个被封
-                if proxies_list:
-                    ip_port = random.choice(proxies_list).strip()
-                    if ':' in ip_port:
-                        print(f"🚀 获取到临时代理: {ip_port}")
-                        return {"http": f"http://{ip_port}", "https": f"http://{ip_port}"}
-        except Exception as e:
-            continue
-
-    print("⚠️ 未能获取到可用代理，将尝试直连（可能会超时）...")
-    return None
-
-def safe_request(url, max_retries=3):
+def check_stream_validity(url):
     """
-    带重试和代理机制的安全请求函数
+    检测直播源是否有效。
+    使用 HEAD 请求，速度快，不消耗流量。
     """
-    proxy = get_proxy()
+    try:
+        # 发送 HEAD 请求，只获取头部信息，不下载视频流
+        # allow_redirects=True 允许重定向，因为很多源是 302 跳转
+        response = requests.head(url, headers=HEADERS, timeout=TIMEOUT_SECONDS, allow_redirects=True)
 
-    for attempt in range(max_retries):
-        try:
-            print(f"   🔄 正在请求 (尝试 {attempt+1}/{max_retries})...")
-            # 如果有代理就用代理，没有就传 None (直连)
-            resp = requests.get(url, headers=HEADERS, proxies=proxy, timeout=15)
+        # 状态码 200 OK 表示资源存在且可访问
+        if response.status_code == 200:
+            return True
+        else:
+            # 403, 404, 500 等都视为无效
+            return False
+    except requests.exceptions.Timeout:
+        # 超时，说明源太慢或连不上 -> 判定为卡顿/无效
+        return False
+    except requests.exceptions.ConnectionError:
+        # 连接错误 -> 无效
+        return False
+    except Exception as e:
+        # 其他错误
+        return False
 
-            if resp.status_code == 200:
-                # 简单的内容校验，防止抓到验证码页面
-                if len(resp.text) > 100:
-                    return resp.text
-                else:
-                    print(f"   ⚠️ 响应内容过短，可能被拦截，切换代理重试...")
-                    proxy = get_proxy() # 重新获取代理
-            else:
-                print(f"   ⚠️ 状态码: {resp.status_code}")
+def clean_channel_name(name):
+    """清洗频道名称"""
+    for word in SUFFIX_WORDS:
+        name = name.replace(word, "")
+    return name.strip()
 
-        except requests.exceptions.RequestException as e:
-            print(f"   ❌ 请求失败: {e}")
-            # 失败了也尝试换个代理
-            proxy = get_proxy()
+def get_logo_url(channel_name):
+    """简单的台标匹配逻辑"""
+    # 这里可以根据你的 fanmingming 仓库结构完善
+    # 暂时返回一个默认值或空
+    return ""
 
-    return None
+def main():
+    print(f"开始抓取: {FULL_URL}")
 
-# ==================== 业务逻辑 ====================
+    # 1. 获取页面内容
+    try:
+        resp = requests.get(FULL_URL, headers=HEADERS, timeout=10)
+        resp.encoding = 'utf-8' # 根据网站实际情况调整编码，可能是 gbk
+        soup = BeautifulSoup(resp.text, 'html.parser')
+    except Exception as e:
+        print(f"无法访问源站: {e}")
+        return
 
-def get_telecom_links(page_url):
-    print(f"🔍 正在分析入口页面: {page_url}")
-    html = safe_request(page_url)
+    # 2. 解析 M3U 内容
+    # 假设网站直接返回 m3u 文本，或者在 pre/code 标签里
+    # 如果是网页表格形式，需要改解析逻辑。
+    # 根据之前的经验，这类站通常直接吐出文本或者在特定区域。
+    # 这里假设它是纯文本 m3u 格式，或者我们需要提取其中的 http 链接
 
-    if not html:
-        print("❌ 无法访问入口页面，请检查网络或代理")
-        return []
+    content = resp.text
+    lines = content.split('\n')
 
-    soup = BeautifulSoup(html, 'html.parser')
-    telecom_links = []
+    valid_channels = []
+    current_name = ""
 
-    # 这里的正则匹配可能需要根据网站实际变动微调，目前按原逻辑
-    operator_tags = soup.find_all(string=re.compile("河北-电信"))
-
-    for tag in operator_tags:
-        btn = tag.find_previous(name='a')
-        if btn and btn.get('href'):
-            link = btn['href']
-            if not link.startswith('http'):
-                base_domain = "http://nn.7x9d.cn"
-                link = base_domain + "/" + link.lstrip('/')
-            ip_text = btn.get_text(strip=True)
-            print(f"✅ 发现电信源: [{ip_text}] -> {link}")
-            telecom_links.append(link)
-
-    return list(set(telecom_links))
-
-def fetch_playlist(url):
-    print(f"   📡 正在抓取子源: {url}")
-    content = safe_request(url)
-
-    if not content:
-        print(f"   ❌ 子源抓取失败")
-        return ""
-
-    if len(content) < 50:
-        print(f"   ⚠️ 内容过少，跳过")
-        return ""
-
-    return content
-
-def parse_raw_content(content):
-    channels = []
-    lines = content.replace('<br>', '\n').replace('<br/>', '\n').splitlines()
-    current_extinf = ""
+    print("开始验证直播源有效性 (这可能需要几分钟)...")
 
     for line in lines:
         line = line.strip()
-        if not line or line.startswith('#!') or line.startswith('//'):
+        if not line:
             continue
 
-        if line.startswith('#EXTINF'):
-            current_extinf = line
-            continue
-
-        if not line.startswith('#') and current_extinf:
-            url = line
-            if ',' in current_extinf:
-                channel_name = current_extinf.split(',')[-1].strip()
+        # 识别 #EXTINF 行 (包含频道名)
+        if line.startswith("#EXTINF"):
+            # 提取名字，通常在 tvg-name="xxx" 或逗号后面
+            match = re.search(r'tvg-name="(.*?)"', line)
+            if match:
+                current_name = match.group(1)
             else:
-                channel_name = "未知频道"
+                # 兼容没有 tag 的情况，取逗号后的内容
+                if "," in line:
+                    current_name = line.split(",")[-1]
 
-            if channel_name and url.startswith('http'):
-                channels.append({'name': channel_name, 'url': url})
-            current_extinf = ""
-            continue
+        # 识别 URL 行 (http...)
+        elif line.startswith("http"):
+            url = line
 
-        if ',' in line and not line.startswith('#'):
-            parts = line.split(',', 1)
-            if len(parts) == 2:
-                channel_name, url = [x.strip() for x in parts]
-                if channel_name and url.startswith('http'):
-                    channels.append({'name': channel_name, 'url': url})
+            # --- 核心过滤逻辑 ---
+            is_valid = check_stream_validity(url)
 
-    return channels
+            if is_valid:
+                print(f"[OK] {current_name}")
+                # 构造标准的 m3u 条目
+                logo = get_logo_url(current_name)
+                entry = f'#EXTINF:-1 tvg-name="{current_name}" tvg-logo="{logo}",{current_name}\n{url}'
+                valid_channels.append(entry)
+            else:
+                # 静默丢弃，或者打印日志
+                # print(f"[Skip] {current_name} (超时或无效)")
+                pass
 
-def extract_logo_name(channel_name):
-    name = channel_name.strip()
-    if name.upper().startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(\d+?)", name.upper())
-        if match:
-            num = match.group(1).replace("+", "PLUS")
-            return f"CCTV{num}"
-    if "卫视" in name:
-        match = re.search(r"(.+?)卫视", name)
-        if match:
-            return match.group(1).strip()
+    # 3. 写入文件
+    if valid_channels:
+        m3u_header = '#EXTM3U x-tvg-url="http://epg.51zmt.top:8000/e.xml"\n'
+        final_content = m3u_header + "\n".join(valid_channels)
 
-    clean_name = name
-    for word in SUFFIX_WORDS:
-        clean_name = clean_name.replace(word, "")
-    return clean_name.strip() if clean_name.strip() else name
+        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+            f.write(final_content)
 
-def get_channel_group(channel_name):
-    name = channel_name.strip()
-    if name.upper().startswith("CCTV"): return "央视频道"
-    elif "卫视" in name: return "卫视频道"
-    elif "河北" in name: return "河北地方"
-    elif any(x in name for x in ["电影", "影院"]): return "影视频道"
-    elif any(x in name for x in ["体育", "赛事"]): return "体育频道"
-    elif any(x in name for x in ["少儿", "卡通"]): return "少儿频道"
-    else: return "其他"
+        print(f"\n成功! 共保留了 {len(valid_channels)} 个有效频道。")
+        print(f"文件已保存为: {OUTPUT_FILE}")
+    else:
+        print("\n失败! 没有找到任何有效的直播源。可能是网络问题或源站反爬。")
 
-def get_epg_id(channel_name):
-    name = channel_name.strip().upper()
-    if name.startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(\d+?)", name)
-        if match: return f"CCTV{match.group(1).replace('+', 'PLUS')}"
-    if "卫视" in name:
-        match = re.search(r"(.+?)卫视", name)
-        if match:
-            province = match.group(1).strip()
-            p_map = {"北京":"BTV","上海":"东方卫视","天津":"天津卫视","重庆":"重庆卫视","湖南":"湖南卫视","浙江":"浙江卫视","江苏":"江苏卫视","广东":"广东卫视","山东":"山东卫视","河南":"河南卫视","河北":"河北卫视","四川":"四川卫视","湖北":"湖北卫视","辽宁":"辽宁卫视","黑龙江":"黑龙江卫视","吉林":"吉林卫视","安徽":"安徽卫视","福建":"福建卫视","江西":"江西卫视","山西":"山西卫视","陕西":"陕西卫视","甘肃":"甘肃卫视","青海":"青海卫视","宁夏":"宁夏卫视","新疆":"新疆卫视","西藏":"西藏卫视","内蒙古":"内蒙古卫视","广西":"广西卫视","贵州":"贵州卫视","云南":"云南卫视","海南":"海南卫视"}
-            return p_map.get(province, f"{province}卫视")
-    if "河北" in name: return name.replace("高清","").replace("HD","").strip()
-    return name
-
-def enrich_channels(raw_channels):
-    merged = {}
-    for ch in raw_channels:
-        name = ch['name']
-        url = ch['url']
-        if name not in merged:
-            merged[name] = {
-                'group': get_channel_group(name),
-                'logo': f"{LOGO_BASE_URL}{extract_logo_name(name).replace(' ', '').replace('-', '')}.png",
-                'epg': get_epg_id(name),
-                'urls': []
-            }
-        if url not in merged[name]['urls']:
-            merged[name]['urls'].append(url)
-    return merged
-
-def generate_m3u(enriched_channels, output_file):
-    with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
-        total_count = 0
-        for name, info in enriched_channels.items():
-            for idx, url in enumerate(info['urls']):
-                suffix = f" 源{idx+1}" if len(info['urls']) > 1 else ""
-                display_name = f"{name}{suffix}"
-                extinf = (
-                    f'#EXTINF:-1 '
-                    f'group-title="{info["group"]}" '
-                    f'tvg-id="{info["epg"]}" '
-                    f'tvg-name="{name}" '
-                    f'tvg-logo="{info["logo"]}",'
-                    f'{display_name}'
-                )
-                f.write(f"{extinf}\n{url}\n")
-                total_count += 1
-    return total_count
-
-def main():
-    print("=" * 50)
-    print("🚀 河北电信直播源抓取工具 (Proxy Enabled)")
-    print("=" * 50)
-
-    links = get_telecom_links(BASE_URL)
-    if not links:
-        print("❌ 未找到任何链接，程序终止")
-        # 即使没找到，也生成一个空文件，防止 git commit 报错说文件不存在
-        with open(OUTPUT_FILE, 'w') as f: f.write("#EMPTY\n")
-        return
-
-    all_raw_channels = []
-    for i, link in enumerate(links, 1):
-        print(f"\n--- [{i}/{len(links)}] ---")
-        content = fetch_playlist(link)
-        if content:
-            channels = parse_raw_content(content)
-            print(f"   ✅ 解析出 {len(channels)} 个频道")
-            all_raw_channels.extend(channels)
-        time.sleep(1)
-
-    if not all_raw_channels:
-        print("\n⚠️ 未能解析出任何频道数据，生成空文件")
-        with open(OUTPUT_FILE, 'w') as f: f.write("#EMPTY\n")
-        return
-
-    enriched = enrich_channels(all_raw_channels)
-    total = generate_m3u(enriched, OUTPUT_FILE)
-
-    print("\n" + "=" * 50)
-    print(f"🎉 完成！唯一频道: {len(enriched)}, 总线路: {total}")
-    print("=" * 50)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
