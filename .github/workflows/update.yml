@@ -2,8 +2,6 @@ name: Auto Update IPTV List
 
 on:
   schedule:
-    # UTC 00:00 = 北京时间 08:00
-    # UTC 09:00 = 北京时间 17:00
     - cron: '0 0 * * *'
     - cron: '0 9 * * *'
   workflow_dispatch:
@@ -21,12 +19,29 @@ jobs:
         with:
           python-version: '3.x'
 
+      # --- 新增步骤：获取免费代理 IP ---
+      - name: Get Proxy
+        id: get_proxy
+        run: |
+          # 尝试从公开API获取一个可用的HTTP代理
+          PROXY=$(curl -s https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all | head -n 1)
+          if [ -z "$PROXY" ]; then
+            echo "未获取到代理，尝试备用地址..."
+            PROXY=$(curl -s https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt | head -n 1)
+          fi
+          echo "Found proxy: $PROXY"
+          echo "proxy=$PROXY" >> $GITHUB_OUTPUT
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4
 
+      # --- 修改步骤：运行脚本时注入代理环境变量 ---
       - name: Run main.py
+        env:
+          HTTP_PROXY: http://${{ steps.get_proxy.outputs.proxy }}
+          HTTPS_PROXY: http://${{ steps.get_proxy.outputs.proxy }}
         run: python main.py
 
       - name: Commit and Push changes
