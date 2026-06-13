@@ -5,14 +5,14 @@ import time
 import os
 import random
 
-# --- 配置区 ---
+# ==================== 配置区 ====================
 BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
 OUTPUT_FILE = "kaniptv.m3u"
 
-# ✅ 修改1: 台标源地址更新为 GitHub 仓库地址
-LOGO_BASE_URL = "https://github.com/fanmingming/live/tree/main/tv/"
+# ✅ 已修正：使用 raw.githubusercontent.com 确保播放器能读取图片
+LOGO_BASE_URL = "https://raw.githubusercontent.com/fanmingming/live/main/tv/"
 
-# ✅ 修改2: EPG 节目列表地址更新为指定地址
+# ✅ 已更新：指定的 EPG 节目单地址
 EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
 
 SUFFIX_WORDS = [
@@ -27,6 +27,7 @@ HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
 }
+
 
 # ==================== 核心网络模块（含自动代理） ====================
 
@@ -44,6 +45,7 @@ def get_proxy():
             resp = requests.get(api, timeout=5)
             if resp.status_code == 200:
                 proxies_list = resp.text.strip().split('\r\n')
+                # 随机取一个，避免总是用同一个被封
                 if proxies_list:
                     ip_port = random.choice(proxies_list).strip()
                     if ':' in ip_port:
@@ -55,6 +57,7 @@ def get_proxy():
     print("⚠️ 未能获取到可用代理，将尝试直连（可能会超时）...")
     return None
 
+
 def safe_request(url, max_retries=3):
     """
     带重试和代理机制的安全请求函数
@@ -64,22 +67,26 @@ def safe_request(url, max_retries=3):
     for attempt in range(max_retries):
         try:
             print(f"   🔄 正在请求 (尝试 {attempt+1}/{max_retries})...")
+            # 如果有代理就用代理，没有就传 None (直连)
             resp = requests.get(url, headers=HEADERS, proxies=proxy, timeout=15)
 
             if resp.status_code == 200:
+                # 简单的内容校验，防止抓到验证码页面
                 if len(resp.text) > 100:
                     return resp.text
                 else:
                     print(f"   ⚠️ 响应内容过短，可能被拦截，切换代理重试...")
-                    proxy = get_proxy()
+                    proxy = get_proxy()  # 重新获取代理
             else:
                 print(f"   ⚠️ 状态码: {resp.status_code}")
 
         except requests.exceptions.RequestException as e:
             print(f"   ❌ 请求失败: {e}")
+            # 失败了也尝试换个代理
             proxy = get_proxy()
 
     return None
+
 
 # ==================== 业务逻辑 ====================
 
@@ -94,6 +101,7 @@ def get_telecom_links(page_url):
     soup = BeautifulSoup(html, 'html.parser')
     telecom_links = []
 
+    # 这里的正则匹配可能需要根据网站实际变动微调
     operator_tags = soup.find_all(string=re.compile("河北-电信"))
 
     for tag in operator_tags:
@@ -109,6 +117,7 @@ def get_telecom_links(page_url):
 
     return list(set(telecom_links))
 
+
 def fetch_playlist(url):
     print(f"   📡 正在抓取子源: {url}")
     content = safe_request(url)
@@ -122,6 +131,7 @@ def fetch_playlist(url):
         return ""
 
     return content
+
 
 def parse_raw_content(content):
     channels = []
@@ -158,6 +168,7 @@ def parse_raw_content(content):
 
     return channels
 
+
 def extract_logo_name(channel_name):
     name = channel_name.strip()
     if name.upper().startswith("CCTV"):
@@ -175,6 +186,7 @@ def extract_logo_name(channel_name):
         clean_name = clean_name.replace(word, "")
     return clean_name.strip() if clean_name.strip() else name
 
+
 def get_channel_group(channel_name):
     name = channel_name.strip()
     if name.upper().startswith("CCTV"): return "央视频道"
@@ -185,6 +197,7 @@ def get_channel_group(channel_name):
     elif any(x in name for x in ["少儿", "卡通"]): return "少儿频道"
     else: return "其他"
 
+
 def get_epg_id(channel_name):
     name = channel_name.strip().upper()
     if name.startswith("CCTV"):
@@ -194,10 +207,20 @@ def get_epg_id(channel_name):
         match = re.search(r"(.+?)卫视", name)
         if match:
             province = match.group(1).strip()
-            p_map = {"北京":"BTV","上海":"东方卫视","天津":"天津卫视","重庆":"重庆卫视","湖南":"湖南卫视","浙江":"浙江卫视","江苏":"江苏卫视","广东":"广东卫视","山东":"山东卫视","河南":"河南卫视","河北":"河北卫视","四川":"四川卫视","湖北":"湖北卫视","辽宁":"辽宁卫视","黑龙江":"黑龙江卫视","吉林":"吉林卫视","安徽":"安徽卫视","福建":"福建卫视","江西":"江西卫视","山西":"山西卫视","陕西":"陕西卫视","甘肃":"甘肃卫视","青海":"青海卫视","宁夏":"宁夏卫视","新疆":"新疆卫视","西藏":"西藏卫视","内蒙古":"内蒙古卫视","广西":"广西卫视","贵州":"贵州卫视","云南":"云南卫视","海南":"海南卫视"}
+            p_map = {
+                "北京": "BTV", "上海": "东方卫视", "天津": "天津卫视", "重庆": "重庆卫视",
+                "湖南": "湖南卫视", "浙江": "浙江卫视", "江苏": "江苏卫视", "广东": "广东卫视",
+                "山东": "山东卫视", "河南": "河南卫视", "河北": "河北卫视", "四川": "四川卫视",
+                "湖北": "湖北卫视", "辽宁": "辽宁卫视", "黑龙江": "黑龙江卫视", "吉林": "吉林卫视",
+                "安徽": "安徽卫视", "福建": "福建卫视", "江西": "江西卫视", "山西": "山西卫视",
+                "陕西": "陕西卫视", "甘肃": "甘肃卫视", "青海": "青海卫视", "宁夏": "宁夏卫视",
+                "新疆": "新疆卫视", "西藏": "西藏卫视", "内蒙古": "内蒙古卫视", "广西": "广西卫视",
+                "贵州": "贵州卫视", "云南": "云南卫视", "海南": "海南卫视"
+            }
             return p_map.get(province, f"{province}卫视")
-    if "河北" in name: return name.replace("高清","").replace("HD","").strip()
+    if "河北" in name: return name.replace("高清", "").replace("HD", "").strip()
     return name
+
 
 def enrich_channels(raw_channels):
     merged = {}
@@ -205,10 +228,13 @@ def enrich_channels(raw_channels):
         name = ch['name']
         url = ch['url']
         if name not in merged:
+            # 构造 Logo URL: BaseURL + CleanName.png
+            logo_name = extract_logo_name(name).replace(' ', '').replace('-', '')
+            logo_url = f"{LOGO_BASE_URL}{logo_name}.png"
+
             merged[name] = {
                 'group': get_channel_group(name),
-                # ✅ 这里会自动使用上面修改后的 LOGO_BASE_URL
-                'logo': f"{LOGO_BASE_URL}{extract_logo_name(name).replace(' ', '').replace('-', '')}.png",
+                'logo': logo_url,
                 'epg': get_epg_id(name),
                 'urls': []
             }
@@ -216,9 +242,10 @@ def enrich_channels(raw_channels):
             merged[name]['urls'].append(url)
     return merged
 
+
 def generate_m3u(enriched_channels, output_file):
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        # ✅ 这里会自动使用上面修改后的 EPG_URL
+        # 写入 M3U 头部和 EPG 链接
         f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
         total_count = 0
         for name, info in enriched_channels.items():
@@ -237,6 +264,7 @@ def generate_m3u(enriched_channels, output_file):
                 total_count += 1
     return total_count
 
+
 def main():
     print("=" * 50)
     print("🚀 河北电信直播源抓取工具 (Proxy Enabled)")
@@ -245,6 +273,7 @@ def main():
     links = get_telecom_links(BASE_URL)
     if not links:
         print("❌ 未找到任何链接，程序终止")
+        # 即使没找到，也生成一个空文件，防止 git commit 报错说文件不存在
         with open(OUTPUT_FILE, 'w') as f: f.write("#EMPTY\n")
         return
 
@@ -269,6 +298,7 @@ def main():
     print("\n" + "=" * 50)
     print(f"🎉 完成！唯一频道: {len(enriched)}, 总线路: {total}")
     print("=" * 50)
+
 
 if __name__ == '__main__':
     main()
