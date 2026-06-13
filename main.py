@@ -4,12 +4,17 @@ import re
 import time
 import os
 import random
+import gzip
+import io
 
 # --- 配置区 ---
 BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=河北"  # 河北专区
 OUTPUT_FILE = "kaniptv.m3u"
 LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/"
-EPG_URL = "http://epg.51zmt.top:8000/e.xml"
+# 更新为用户提供的 EPG 源
+EPG_SOURCE_URL = "https://epg.zsdc.eu.org/t.xml.gz"
+# 本地解压后的 EPG 文件名
+LOCAL_EPG_FILE = "epg.xml"
 
 SUFFIX_WORDS = [
     "高清", "HD", "hd", "4K", "超清", "标清", "SD",
@@ -69,6 +74,40 @@ def safe_request(url, max_retries=3):
             proxy = get_proxy()
 
     return None
+
+# ==================== 新增：EPG 处理模块 ====================
+
+def fetch_and_decompress_epg():
+    """
+    专门用于下载 .gz 压缩的 EPG 并解压保存为本地文件
+    """
+    print(f"⏬ 正在下载并解压 EPG 源: {EPG_SOURCE_URL}")
+    
+    try:
+        # 直接下载二进制内容
+        response = requests.get(EPG_SOURCE_URL, timeout=30)
+        response.raise_for_status()
+
+        # 使用 gzip 解压
+        with gzip.GzipFile(fileobj=io.BytesIO(response.content)) as gz_file:
+            decoded_content = gz_file.read().decode('utf-8')
+
+        # 保存为本地文件
+        with open(LOCAL_EPG_FILE, 'w', encoding='utf-8') as f:
+            f.write(decoded_content)
+
+        print(f"✅ EPG 文件已成功更新: {LOCAL_EPG_FILE}")
+        return LOCAL_EPG_FILE
+
+    except Exception as e:
+        print(f"❌ 处理 EPG 时发生错误: {e}")
+        # 如果出错，尝试直接使用旧的 epg.xml（如果存在）
+        if os.path.exists(LOCAL_EPG_FILE):
+            print(f"ℹ️ 使用现有的本地 EPG 文件: {LOCAL_EPG_FILE}")
+            return LOCAL_EPG_FILE
+        else:
+            print(f"❌ 本地 EPG 文件也不存在，播放器可能无法显示节目单。")
+            return None
 
 # ==================== 业务逻辑 ====================
 
@@ -156,7 +195,7 @@ def parse_raw_content(content):
 def extract_logo_name(channel_name):
     name = channel_name.strip()
     if name.upper().startswith("CCTV"):
-        match = re.search(r"CCTV[-s]?(d+?)", name.upper())
+        match = re.search(r"CCTV[-\s]?(\d+?)", name.upper())
         if match:
             num = match.group(1).replace("+", "PLUS")
             return f"CCTV{num}"
@@ -183,7 +222,7 @@ def get_channel_group(channel_name):
 def get_epg_id(channel_name):
     name = channel_name.strip().upper()
     if name.startswith("CCTV"):
-        match = re.search(r"CCTV[-s]?(d+?)", name)
+        match = re.search(r"CCTV[-\s]?(\d+?)", name)
         if match: return f"CCTV{match.group(1).replace('+', 'PLUS')}"
     if "卫视" in name:
         match = re.search(r"(.+?)卫视", name)
@@ -211,8 +250,9 @@ def enrich_channels(raw_channels):
     return merged
 
 def generate_m3u(enriched_channels, output_file):
+    # 写入 M3U 文件时，指向本地解压好的 EPG 文件
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
+        f.write(f'#EXTM3U x-tvg-url="{LOCAL_EPG_FILE}"\n')
         total_count = 0
         for name, info in enriched_channels.items():
             for idx, url in enumerate(info['urls']):
@@ -235,6 +275,13 @@ def main():
     print("🚀 河北电信直播源抓取工具 (收录时间: 2026-06-12)")
     print("=" * 50)
 
+    # 1. 先处理 EPG
+    epg_file = fetch_and_decompress_epg()
+    if not epg_file:
+        # 即使 EPG 失败，也继续生成直播源，只是节目单可能为空
+        pass
+
+    # 2. 处理直播源
     links = get_telecom_links(BASE_URL)
     if not links:
         print("❌ 未找到任何链接，程序终止")
