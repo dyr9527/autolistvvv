@@ -1,35 +1,35 @@
-#EXTM3U x-tvg-url="http://epg.51zmt.top:8000/e.xml"
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-1" tvg-name="CCTV-1" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-1
+#EXTM3U x-tvg-url="epg.xml"
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV1" tvg-name="CCTV-1" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-1
 http://106.115.24.7:19901/tsfile/live/1000_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-2" tvg-name="CCTV-2" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV2.png",CCTV-2
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV2" tvg-name="CCTV-2" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV2.png",CCTV-2
 http://106.115.24.7:19901/tsfile/live/1001_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-3" tvg-name="CCTV-3" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV3.png",CCTV-3
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV3" tvg-name="CCTV-3" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV3.png",CCTV-3
 http://106.115.24.7:19901/tsfile/live/1002_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-4" tvg-name="CCTV-4" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV4.png",CCTV-4
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV4" tvg-name="CCTV-4" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV4.png",CCTV-4
 http://106.115.24.7:19901/tsfile/live/1003_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-5" tvg-name="CCTV-5" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV5.png",CCTV-5
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV5" tvg-name="CCTV-5" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV5.png",CCTV-5
 http://106.115.24.7:19901/tsfile/live/1004_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-6" tvg-name="CCTV-6" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV6.png",CCTV-6
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV6" tvg-name="CCTV-6" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV6.png",CCTV-6
 http://106.115.24.7:19901/tsfile/live/1005_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-7" tvg-name="CCTV-7" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV7.png",CCTV-7
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV7" tvg-name="CCTV-7" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV7.png",CCTV-7
 http://106.115.24.7:19901/tsfile/live/1006_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-8" tvg-name="CCTV-8" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV8.png",CCTV-8
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV8" tvg-name="CCTV-8" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV8.png",CCTV-8
 http://106.115.24.7:19901/tsfile/live/1007_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-9" tvg-name="CCTV-9" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV9.png",CCTV-9
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV9" tvg-name="CCTV-9" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV9.png",CCTV-9
 http://106.115.24.7:19901/tsfile/live/1008_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-10" tvg-name="CCTV-10" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV10.png",CCTV-10
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV1" tvg-name="CCTV-10" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-10
 http://106.115.24.7:19901/tsfile/live/1009_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-11" tvg-name="CCTV-11" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV11.png",CCTV-11
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV1" tvg-name="CCTV-11" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-11
 http://106.115.24.7:19901/tsfile/live/1010_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-12" tvg-name="CCTV-12" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV12.png",CCTV-12
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV1" tvg-name="CCTV-12" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-12
 http://106.115.24.7:19901/tsfile/live/1011_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-13" tvg-name="CCTV-13" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV13.png",CCTV-13
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV1" tvg-name="CCTV-13" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-13
 http://106.115.24.7:19901/tsfile/live/1012_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-14" tvg-name="CCTV-14" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV14.png",CCTV-14
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV1" tvg-name="CCTV-14" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-14
 http://106.115.24.7:19901/tsfile/live/1013_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-15" tvg-name="CCTV-15" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV15.png",CCTV-15
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV1" tvg-name="CCTV-15" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-15
 http://106.115.24.7:19901/tsfile/live/1014_1.m3u8?key=txiptv&playlive=1&authid=0
-#EXTINF:-1 group-title="央视频道" tvg-id="CCTV-17" tvg-name="CCTV-17" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV17.png",CCTV-17
+#EXTINF:-1 group-title="央视频道" tvg-id="CCTV1" tvg-name="CCTV-17" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/CCTV1.png",CCTV-17
 http://106.115.24.7:19901/tsfile/live/1015_1.m3u8?key=txiptv&playlive=1&authid=0
 #EXTINF:-1 group-title="卫视频道" tvg-id="河北卫视" tvg-name="河北卫视" tvg-logo="https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/河北.png",河北卫视
 http://106.115.24.7:19901/tsfile/live/0117_1.m3u8?key=txiptv&playlive=1&authid=0
