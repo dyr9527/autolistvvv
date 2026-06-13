@@ -4,12 +4,16 @@ import requests
 import time
 from bs4 import BeautifulSoup
 
-# 配置基础常量
-TARGET_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
+# 配置基础常量（采用 allorigins 跨域解封跳板）
+PROXY_PREFIX = "https://api.allorigins.win/raw?url="
+ORIGINAL_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
+TARGET_URL = f"{PROXY_PREFIX}{ORIGINAL_URL}"
+
 EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
 LOGO_BASE_URL = "https://raw.githubusercontent.com/fanmingming/live/main/tv/" 
 OUTPUT_FILENAME = "hebei_iptv.m3u"
 
+# 频道映射字典保持不变
 CHANNEL_MAP = {
     "CCTV1": {"id": "CCTV1", "logo": "CCTV1.png", "group": "央视频道"},
     "CCTV1综合": {"id": "CCTV1", "logo": "CCTV1综合.png", "group": "央视频道"},
@@ -33,7 +37,6 @@ CHANNEL_MAP = {
     "CCTV15": {"id": "CCTV15", "logo": "CCTV15.png", "group": "央视频道"},
     "CCTV16": {"id": "CCTV16", "logo": "CCTV16.png", "group": "央视频道"},
     "CCTV17": {"id": "CCTV17", "logo": "CCTV17.png", "group": "央视频道"},
-    
     "湖南卫视": {"id": "湖南卫视", "logo": "湖南卫视.png", "group": "卫视频道"},
     "浙江卫视": {"id": "浙江卫视", "logo": "浙江卫视.png", "group": "卫视频道"},
     "东方卫视": {"id": "东方卫视", "logo": "东方卫视.png", "group": "卫视频道"},
@@ -49,26 +52,17 @@ CHANNEL_MAP = {
 }
 
 def get_sub_link():
-    """从主页解析指定条件的第一个蓝色按钮链接（增加国内重试和伪装机制）"""
-    # 进一步强化浏览器伪装，模仿国内常用浏览器，避免被拦截
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9',
-        'Connection': 'keep-alive'
     }
-    
-    # 增加 3 次重试机制
     for attempt in range(1, 4):
         try:
-            print(f"正在尝试请求主页 (第 {attempt} 次)...")
-            response = requests.get(TARGET_URL, headers=headers, timeout=20)
+            print(f"正在尝试通过代理请求主页 (第 {attempt} 次)...")
+            response = requests.get(TARGET_URL, headers=headers, timeout=25)
             response.encoding = 'utf-8'
             
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # 优先寻找包含“运营商：河北-电信”的文本节点
                 text_nodes = soup.find_all(text=re.compile("运营商.*河北-电信"))
                 
                 for node in text_nodes:
@@ -87,39 +81,33 @@ def get_sub_link():
                             href = f"http://nn.7x9d.cn/xzjd2.php?ip={btn_text}"
                         
                         if href:
-                            print(f"成功定位到下级链接: {href}")
-                            return href
+                            # 同样为下级链接套上代理前缀
+                            final_link = f"{PROXY_PREFIX}{href}"
+                            print(f"成功定位并拼接代理下级链接: {final_link}")
+                            return final_link
 
-                # 兜底：如果上面的复杂文本定位失败，直接抓取页面第一个包含 IP 格式文本的 a 标签
                 all_links = soup.find_all('a')
                 for link in all_links:
                     if re.match(r'\d+\.\d+\.\d+\.\d+:\d+', link.text.strip()):
                         href = link.get('href')
-                        if href:
-                            return "http://nn.7x9d.cn/" + href if not href.startswith('http') else href
-                        else:
-                            return f"http://nn.7x9d.cn/xzjd2.php?ip={link.text.strip()}"
-            else:
-                print(f"服务器返回状态码错误: {response.status_code}")
+                        url = "http://nn.7x9d.cn/" + href if href and not href.startswith('http') else f"http://nn.7x9d.cn/xzjd2.php?ip={link.text.strip()}"
+                        return f"{PROXY_PREFIX}{url}"
         except Exception as e:
-            print(f"第 {attempt} 次尝试失败，错误信息: {e}")
+            print(f"第 {attempt} 次代理尝试失败: {e}")
             if attempt < 3:
-                time.sleep(3) # 等待3秒后重试
-                
+                time.sleep(3)
     return None
 
 def fetch_raw_streams(sub_link):
-    """访问下级链接获取直播源纯文本内容"""
     if not sub_link:
         return ""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept-Language': 'zh-CN,zh;q=0.9',
     }
     for attempt in range(1, 4):
         try:
-            print(f"正在请求下级页面 (第 {attempt} 次)...")
-            res = requests.get(sub_link, headers=headers, timeout=20)
+            print(f"正在通过代理请求下级页面 (第 {attempt} 次)...")
+            res = requests.get(sub_link, headers=headers, timeout=25)
             res.encoding = 'utf-8'
             if res.status_code == 200:
                 return res.text
@@ -130,10 +118,8 @@ def fetch_raw_streams(sub_link):
     return ""
 
 def process_to_m3u(raw_text):
-    """将原始文本加工成带台标和EPG的M3U文件"""
     if not raw_text:
         print("错误：未能成功获取到有效的直播源数据，无法生成 M3U 文件。")
-        # 如果彻底失败，创建一个提示错误的空M3U文件，防止 GitHub Actions 下一步报错中断
         with open(OUTPUT_FILENAME, "w", encoding="utf-8") as f:
             f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n# 暂未获取到有效的直播源更新\n')
         return
@@ -187,8 +173,7 @@ def process_to_m3u(raw_text):
         
     with open(OUTPUT_FILENAME, "w", encoding="utf-8") as f:
         f.write(m3u_content)
-    
-    print(f"M3U生成完毕，共收录 {count} 个频道。文件已保存为 {OUTPUT_FILENAME}")
+    print(f"M3U生成完毕，共收录 {count} 个频道。")
 
 if __name__ == "__main__":
     print("开始获取酒店源...")
@@ -198,4 +183,4 @@ if __name__ == "__main__":
         process_to_m3u(raw_data)
     else:
         print("未能成功获取到指定的下级按钮链接。")
-        process_to_m3u("")  # 调用创建兜底空文件
+        process_to_m3u("")
