@@ -1,1 +1,5 @@
 requests
+beautifulsoup4
+gzip
+xml.etree.ElementTree
+urllib3
