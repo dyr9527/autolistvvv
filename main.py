@@ -22,6 +22,10 @@ SUFFIX_WORDS = [
     "科教", "戏曲", "社会与法", "新闻", "音乐"
 ]
 
+# 获取代理设置 (从环境变量读取)
+PROXY = os.environ.get('HTTP_PROXY', None)
+proxies = {'http': PROXY, 'https': PROXY} if PROXY else {}
+
 # 伪装浏览器请求头
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -30,15 +34,11 @@ HEADERS = {
     'Connection': 'keep-alive',
 }
 
-# ==================== 第一阶段：抓取原始直播源 ====================
-
 def get_telecom_links(page_url):
-    """解析入口页面，找到所有"河北-电信"对应的蓝色按钮链接"""
     print(f"🔍 正在分析入口页面: {page_url}")
     try:
-        # 增加 retries 应对网络波动
-        session = requests.Session()
-        resp = session.get(page_url, headers=HEADERS, timeout=30)
+        # 使用 proxies 参数
+        resp = requests.get(page_url, headers=HEADERS, timeout=20, proxies=proxies)
         resp.encoding = 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
 
@@ -63,18 +63,21 @@ def get_telecom_links(page_url):
         return []
 
 def fetch_playlist(url):
-    """访问蓝色按钮的链接，获取纯文本直播源"""
     try:
         headers_with_referer = HEADERS.copy()
         headers_with_referer['Referer'] = BASE_URL
 
-        session = requests.Session()
-        resp = session.get(url, headers=headers_with_referer, timeout=30)
-
+        # 使用 proxies 参数
+        resp = requests.get(url, headers=headers_with_referer, timeout=20, proxies=proxies)
         if resp.encoding == 'ISO-8859-1':
             resp.encoding = 'utf-8'
 
         content = resp.text.strip()
+        # 简单的防拦截判断：如果返回内容包含 "verify" 或 "captcha" 等字样，说明被拦截了
+        if "verify" in content.lower() or "captcha" in content.lower():
+            print(f"⚠️ 触发反爬验证，IP可能被封锁")
+            return ""
+
         if len(content) < 50:
             print(f"⚠️ 返回内容过少，可能被拦截")
             return ""
@@ -86,10 +89,8 @@ def fetch_playlist(url):
         return ""
 
 def parse_raw_content(content):
-    """解析纯文本，返回频道列表"""
     channels = []
     lines = content.replace('<br>', '\n').replace('<br/>', '\n').splitlines()
-
     current_extinf = ""
 
     for line in lines:
@@ -97,12 +98,10 @@ def parse_raw_content(content):
         if not line or line.startswith('#!') or line.startswith('//'):
             continue
 
-        # M3U格式：#EXTINF行
         if line.startswith('#EXTINF'):
             current_extinf = line
             continue
 
-        # M3U格式：URL行
         if not line.startswith('#') and current_extinf:
             url = line
             if ',' in current_extinf:
@@ -114,7 +113,6 @@ def parse_raw_content(content):
             current_extinf = ""
             continue
 
-        # 简单CSV格式：频道名,URL
         if ',' in line and not line.startswith('#'):
             parts = line.split(',', 1)
             if len(parts) == 2:
@@ -124,34 +122,25 @@ def parse_raw_content(content):
 
     return channels
 
-# ==================== 第二阶段：分类、台标、EPG处理 ====================
-
 def extract_logo_name(channel_name):
-    """从频道名称中提取用于匹配台标的关键词"""
     name = channel_name.strip()
-
     if name.upper().startswith("CCTV"):
         match = re.search(r"CCTV[-\s]?(\d+?)", name.upper())
         if match:
             num = match.group(1).replace("+", "PLUS")
             return f"CCTV{num}"
-
     if "卫视" in name:
         match = re.search(r"(.+?)卫视", name)
         if match:
             return match.group(1).strip()
-
     clean_name = name
     for word in SUFFIX_WORDS:
         clean_name = clean_name.replace(word, "")
     clean_name = clean_name.strip()
-
     return clean_name if clean_name else name
 
 def get_channel_group(channel_name):
-    """根据频道名称判断分组"""
     name = channel_name.strip()
-
     if name.upper().startswith("CCTV"):
         return "央视频道"
     elif "卫视" in name:
@@ -170,15 +159,12 @@ def get_channel_group(channel_name):
         return "其他"
 
 def get_epg_id(channel_name):
-    """生成EPG节目单匹配ID"""
     name = channel_name.strip().upper()
-
     if name.startswith("CCTV"):
         match = re.search(r"CCTV[-\s]?(\d+?)", name)
         if match:
             num = match.group(1).replace("+", "PLUS")
             return f"CCTV{num}"
-
     if "卫视" in name:
         match = re.search(r"(.+?)卫视", name)
         if match:
@@ -194,20 +180,15 @@ def get_epg_id(channel_name):
                 "贵州": "贵州卫视", "云南": "云南卫视", "海南": "海南卫视"
             }
             return province_map.get(province, f"{province}卫视")
-
     if "河北" in name:
         return name.replace("高清", "").replace("HD", "").strip()
-
     return name
 
 def enrich_channels(raw_channels):
-    """对原始频道列表进行增强处理"""
     merged = {}
-
     for ch in raw_channels:
         name = ch['name']
         url = ch['url']
-
         if name not in merged:
             merged[name] = {
                 'group': get_channel_group(name),
@@ -215,26 +196,18 @@ def enrich_channels(raw_channels):
                 'epg': get_epg_id(name),
                 'urls': []
             }
-
         if url not in merged[name]['urls']:
             merged[name]['urls'].append(url)
-
     return merged
 
-# ==================== 第三阶段：生成M3U文件 ====================
-
 def generate_m3u(enriched_channels, output_file):
-    """生成最终的M3U文件"""
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        # 文件头，声明EPG地址
         f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
-
         total_count = 0
         for name, info in enriched_channels.items():
             for idx, url in enumerate(info['urls']):
                 suffix = f" 源{idx+1}" if len(info['urls']) > 1 else ""
                 display_name = f"{name}{suffix}"
-
                 extinf = (
                     f'#EXTINF:-1 '
                     f'group-title="{info["group"]}" '
@@ -245,25 +218,22 @@ def generate_m3u(enriched_channels, output_file):
                 )
                 f.write(f"{extinf}\n{url}\n")
                 total_count += 1
-
     return total_count
-
-# ==================== 主程序 ====================
 
 def main():
     print("=" * 50)
     print("🚀 河北电信直播源抓取工具")
+    if PROXY:
+        print(f"🛡️ 当前使用代理: {PROXY}")
+    else:
+        print("⚠️ 未检测到代理，直连模式可能失败")
     print("=" * 50)
 
-    # --- 第一阶段：抓取原始直播源 ---
     print("\n【第一阶段】抓取原始直播源...")
     links = get_telecom_links(BASE_URL)
 
     if not links:
         print("❌ 未找到任何电信源链接")
-        # 即使没找到也生成一个空文件，防止后续报错
-        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-            f.write('#EXTM3U\n')
         return
 
     print(f"\n✅ 共找到 {len(links)} 个电信源，开始逐个抓取...\n")
@@ -280,29 +250,22 @@ def main():
         channels = parse_raw_content(content)
         print(f"   ✅ 解析出 {len(channels)} 个频道")
         all_raw_channels.extend(channels)
-
         time.sleep(1)
 
     if not all_raw_channels:
         print("\n⚠️ 未能解析出任何频道数据")
-        # 生成空文件占位
-        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-            f.write('#EXTM3U\n')
         return
 
     print(f"\n✅ 第一阶段完成！共获取原始频道 {len(all_raw_channels)} 条")
 
-    # --- 第二阶段：分类、台标、EPG处理 ---
     print("\n【第二阶段】正在分类、注入台标和EPG信息...")
     enriched = enrich_channels(all_raw_channels)
     print(f"✅ 第二阶段完成！去重合并后共 {len(enriched)} 个唯一频道")
 
-    # --- 第三阶段：生成M3U文件 ---
     print("\n【第三阶段】正在生成M3U文件...")
     total = generate_m3u(enriched, OUTPUT_FILE)
     print(f"✅ 第三阶段完成！")
 
-    # --- 最终汇总 ---
     print("\n" + "=" * 50)
     print("🎉 全部完成！")
     print(f"   输出文件: {OUTPUT_FILE}")
