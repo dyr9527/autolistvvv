@@ -2,14 +2,14 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
-import os
 import random
+import os
 
 # ==================== 配置区 ====================
 BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
 OUTPUT_FILE = "kaniptv.m3u"
 
-# ✅ 台标源：使用 jsDelivr CDN 加速
+# ✅ 台标源 (jsDelivr CDN)
 LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/"
 
 # ✅ EPG 节目单地址
@@ -20,148 +20,171 @@ TARGET_REGION = "河北"
 TARGET_ISP = "电信"
 TARGET_DATE = "2026-06-12"
 
-SUFFIX_WORDS = [
-    "高清", "HD", "hd", "4K", "超清", "标清", "SD",
-    "频道", "电视台", "综合", "财经", "综艺", "体育",
-    "电影", "电视剧", "纪录", "少儿", "军事", "农业",
-    "科教", "戏曲", "社会与法", "新闻", "音乐"
-]
-
-# ✅ 增强版请求头：模拟真实浏览器，包含 Referer 等字段
+# ✅ 请求头伪装 (模拟真实浏览器，防止被拦截)
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1'
 }
 
-def fetch_with_retry(url, max_retries=3):
+def get_page_content(url, retries=3):
     """
-    带重试机制的请求函数
-    解决 GitHub Actions 偶尔网络波动或目标站响应慢的问题
+    获取页面内容，包含重试机制和随机延时
     """
-    for attempt in range(max_retries):
+    for attempt in range(1, retries + 1):
         try:
-            print(f"  -> 正在尝试连接 (第 {attempt + 1} 次)...")
-            # 设置超时时间为 15 秒，避免无限等待
-            response = requests.get(url, headers=HEADERS, timeout=15)
-            response.raise_for_status()
-            response.encoding = 'utf-8' # 强制指定编码，防止乱码
-            return response.text
-        except Exception as e:
-            print(f"  -> 第 {attempt + 1} 次尝试失败: {e}")
-            if attempt < max_retries - 1:
-                wait_time = random.uniform(2, 5) # 随机等待 2-5 秒
-                print(f"  -> 等待 {wait_time:.1f} 秒后重试...")
-                time.sleep(wait_time)
+            print(f"  -> 正在尝试连接 (第 {attempt} 次)...")
+            # 增加 timeout 到 20秒，给 GitHub Actions 更多反应时间
+            response = requests.get(url, headers=HEADERS, timeout=20)
+            response.encoding = 'utf-8'
+
+            if response.status_code == 200:
+                return response.text
             else:
-                print(f"  -> ❌ 最终失败，无法访问: {url}")
-                return None
+                print(f"  -> 状态码异常: {response.status_code}")
 
-def clean_channel_name(name):
-    """清理频道名称中的后缀"""
-    for word in SUFFIX_WORDS:
-        name = name.replace(word, "")
-    return name.strip()
+        except Exception as e:
+            print(f"  -> 第 {attempt} 次失败: {str(e)[:100]}...")
 
-def get_logo_url(channel_name):
-    """生成台标链接"""
-    # 简单的文件名映射逻辑，实际可能需要更复杂的字典匹配
-    filename = f"{channel_name}.png"
-    return f"{LOGO_BASE_URL}{filename}"
+        # 如果不是最后一次尝试，则等待随机时间后重试
+        if attempt < retries:
+            wait_time = random.uniform(2, 5)  # 随机等待 2-5 秒
+            print(f"  -> 等待 {wait_time:.1f} 秒后重试...")
+            time.sleep(wait_time)
+
+    return None
+
+def parse_channel_name(ip_text):
+    """从IP文本中提取频道名称"""
+    # 去除可能的端口号、空格等干扰字符
+    name = ip_text.strip()
+    # 简单清洗，保留汉字、字母、数字
+    name = re.sub(r'[^\w\u4e00-\u9fa5]', '', name)
+    if not name:
+        name = "未知频道"
+    return name
 
 def main():
-    print("="*50)
+    print("=" * 50)
     print("开始抓取酒店源...")
     print(f"目标地址: {BASE_URL}")
-    print("="*50)
+    print("=" * 50)
 
     # 1. 获取列表页内容
-    html_content = fetch_with_retry(BASE_URL)
-
-    if not html_content:
-        print("❌ 无法获取页面内容，请检查网络或 URL 是否正确。")
+    html = get_page_content(BASE_URL)
+    if not html:
+        print("❌ 无法获取列表页内容，请检查网络或 URL 是否正确。")
+        # 即使失败也生成一个空文件，防止 GitHub Actions 报错找不到文件
+        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            f.write("#EXTM3U\n")
         return
 
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html, 'html.parser')
 
-    # 假设结构：每个源在一个 div 或 li 中，包含蓝色按钮(a标签)和信息文本
-    # 这里需要根据实际 HTML 结构调整选择器。
-    # 根据截图推测，可能是遍历所有的 a 标签或者包含特定 class 的容器
-    # 为了通用性，我们查找所有包含 href 的 a 标签，并检查其周围的文本
+    # 查找所有包含链接的蓝色按钮区域
+    # 根据截图结构，通常是 div 包裹着 a 标签，或者 a 标签本身
+    # 这里我们寻找所有的 <a> 标签，检查其父级或自身是否包含关键信息
+    items = soup.find_all('div', class_=re.compile(r'item|list|box')) # 尝试匹配常见的类名，如果不确定就遍历所有 div
 
-    valid_sources = []
-
-    # 尝试寻找包含信息的容器，或者直接遍历所有链接
-    # 这里的逻辑是：找到所有链接 -> 获取链接下方的文本 -> 判断是否符合条件
-    # 注意：BeautifulSoup 解析 HTML 结构比较严格，如果网页结构不规范可能需要调整
-
-    # 假设每个源块是一个 div 或者 p，或者链接和文本紧挨着
-    # 这里采用一种比较稳健的方法：遍历所有 a 标签，看它后面跟着的文本是否符合要求
-
+    # 如果上面的类名匹配不到，我们采用更暴力的遍历方式：
+    # 遍历所有包含 href 的 a 标签
     links = soup.find_all('a', href=True)
 
-    for link in links:
-        detail_url = link.get('href')
+    m3u_content = '#EXTM3U\n'
+    found_count = 0
 
-        # 补全相对路径
-        if detail_url and not detail_url.startswith('http'):
-            detail_url = BASE_URL.rsplit('/', 1)[0] + '/' + detail_url
+    for link_tag in links:
+        href = link_tag.get('href', '')
+        text = link_tag.get_text(strip=True)
 
-        # 获取该链接附近的文本信息（通常是兄弟节点或父节点的文本）
-        # 截图显示文本在按钮下方，可能是同一个父容器内的文本
-        parent = link.parent
-        text_content = parent.get_text() if parent else ""
+        # 初步判断：链接必须看起来像详情页 (包含 id 或 php)
+        if not ('xzjd2.php' in href or 'detail' in href or len(href) > 10):
+            continue
 
-        # --- 核心筛选逻辑 ---
-        # 必须同时满足三个条件
-        if TARGET_REGION in text_content and \
-           TARGET_ISP in text_content and \
-           TARGET_DATE in text_content:
+        # 获取该链接周围的上下文文本（运营商、时间通常在下方的 div 中）
+        # 由于 BeautifulSoup 很难直接获取“下方兄弟节点”的纯文本而不带标签，
+        # 我们假设结构是：<a>...</a> <div>运营商...</div> <div>时间...</div>
+        parent = link_tag.parent
+        context_text = parent.get_text() if parent else ""
 
-            print(f"\n✅ 发现符合条件的源:")
-            print(f"   链接: {detail_url}")
-            print(f"   信息: {text_content.strip()}")
+        # === 核心筛选逻辑 ===
+        # 1. 检查运营商 (支持 "河北-电信" 或 "河北电信")
+        is_target_isp = (TARGET_REGION in context_text) and (TARGET_ISP in context_text)
+
+        # 2. 检查日期
+        is_target_date = TARGET_DATE in context_text
+
+        if is_target_isp and is_target_date:
+            print(f"\n✅ 发现匹配项: {text}")
+            print(f"   链接: {href}")
+
+            # 拼接完整 URL (如果是相对路径)
+            if href.startswith('/'):
+                detail_url = "http://nn.7x9d.cn" + href
+            elif href.startswith('http'):
+                detail_url = href
+            else:
+                # 处理类似 ?id=xxx 的情况
+                detail_url = BASE_URL.split('?')[0] + href
 
             # 2. 进入详情页获取真实播放地址
-            # 注意：如果详情页也是动态加载的，requests 可能拿不到，需要 Selenium
-            # 但通常这种简单 PHP 站是静态渲染的
-            detail_html = fetch_with_retry(detail_url)
-
+            detail_html = get_page_content(detail_url)
             if detail_html:
                 detail_soup = BeautifulSoup(detail_html, 'html.parser')
-                # 这里需要猜测详情页的结构。通常是 input value, video src, 或者直接文本
-                # 假设真实链接在某个 input 框里，或者是页面里唯一的 http 链接
-                # 这里做一个通用的正则提取 m3u8 或 ts 链接
-                real_link_match = re.search(r'(http[s]?://[^\'"\s<>]+(?:\.m3u8|\.ts))', detail_html)
 
-                if real_link_match:
-                    real_link = real_link_match.group(1)
-                    channel_name = clean_channel_name(text_content.split('\n')[0]) # 简单取第一行做名字
+                # 尝试提取真实播放地址 (通常在 video 标签、source 标签或特定的 div 中)
+                # 这里需要根据实际详情页源码调整，假设是在 <video src="..."> 或 <a class="download">
+                real_url = ""
 
-                    valid_sources.append({
-                        'name': channel_name,
-                        'url': real_link,
-                        'logo': get_logo_url(channel_name)
-                    })
-                    print(f"   🎉 提取到真实地址: {real_link}")
+                # 尝试方案 A: 查找 video 标签
+                video_tag = detail_soup.find('video')
+                if video_tag and video_tag.get('src'):
+                    real_url = video_tag['src']
+
+                # 尝试方案 B: 查找包含 .m3u8 或 .ts 的链接
+                if not real_url:
+                    all_links = detail_soup.find_all('a', href=True)
+                    for l in all_links:
+                        h = l['href']
+                        if '.m3u8' in h or '.ts' in h or 'play' in h:
+                            real_url = h
+                            break
+
+                # 尝试方案 C: 查找 iframe
+                if not real_url:
+                    iframe = detail_soup.find('iframe', src=True)
+                    if iframe:
+                        real_url = iframe['src']
+
+                if real_url:
+                    # 补全绝对路径
+                    if real_url.startswith('/'):
+                        real_url = "http://nn.7x9d.cn" + real_url
+
+                    channel_name = parse_channel_name(text)
+                    logo_url = f"{LOGO_BASE_URL}{channel_name}.png"
+
+                    line = f'#EXTINF:-1 tvg-name="{channel_name}" tvg-logo="{logo_url}" group-title="{TARGET_REGION}{TARGET_ISP}",{channel_name}\n{real_url}\n'
+                    m3u_content += line
+                    found_count += 1
+                    print(f"   🎉 成功提取播放地址: {real_url[:50]}...")
                 else:
-                    print("   ⚠️ 未能在详情页找到播放地址")
+                    print("   ⚠️ 未能从详情页解析出播放地址")
+            else:
+                print("   ❌ 详情页无法访问")
 
-            # 爬取间隔，防止被封
+            # 每次抓取后稍微停顿，避免被封
             time.sleep(random.uniform(1, 3))
 
-    # 3. 生成 M3U 文件
-    if valid_sources:
-        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-            f.write(f'#EXTM3U url-tvg="{EPG_URL}"\n')
-            for source in valid_sources:
-                f.write(f'#EXTINF:-1 tvg-logo="{source["logo"]}" group-title="酒店源",{source["name"]}\n')
-                f.write(f'{source["url"]}\n')
-        print(f"\n🎉 成功！已保存 {len(valid_sources)} 个源到 {OUTPUT_FILE}")
-    else:
-        print("\n😭 没有找到符合条件的源，或者全部抓取失败。")
+    # 保存文件
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        f.write(m3u_content)
+
+    print("\n" + "=" * 50)
+    print(f"抓取完成！共找到 {found_count} 个有效源。")
+    print(f"文件已保存为: {OUTPUT_FILE}")
+    print("=" * 50)
 
 if __name__ == "__main__":
     main()
