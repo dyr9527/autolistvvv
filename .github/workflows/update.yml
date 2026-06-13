@@ -1,42 +1,43 @@
-name: Update M3U Playlist
+name: Update IPTV M3U
 
 on:
   schedule:
-    - cron: '0 18 * * *'
-  workflow_dispatch:
+    - cron: '0 */6 * * *'  # 每6小时运行一次
+  workflow_dispatch:       # 允许手动触发
 
 jobs:
-  update-m3u:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
         with:
-          persist-credentials: true
-      
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-      
+          python-version: '3.x'
+
       - name: Install dependencies
         run: |
           pip install requests beautifulsoup4
-      
+
       - name: Run script
         run: |
           python main.py
-      
+
       - name: Commit and push changes
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add output/live_channels.m3u
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          # 检查是否有变更
+          if [ -n "$(git status --porcelain)" ]; then
+            git add .
+            git commit -m "Auto update live_channels.m3u $(date '+%Y-%m-%d %H:%M:%S')"
+            git push
           else
-            git commit -m "Update live_channels.m3u [$(date '+%Y-%m-%d %H:%M:%S')]"
-            git push origin main
+            echo "No changes to commit."
+          fi
