@@ -6,7 +6,7 @@ import os
 
 # ==================== 配置区 ====================
 # 你的目标网址
-BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C97"
+BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
 OUTPUT_FILE = "kaniptv.m3u"
 
 # ✅ 台标源：使用 jsDelivr CDN 加速 (比 raw.githubusercontent.com 更稳定)
