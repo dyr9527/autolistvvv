@@ -2,9 +2,9 @@ name: Auto Update IPTV List
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # UTC 00:00 (北京时间 08:00)
-    - cron: '0 9 * * *'  # UTC 09:00 (北京时间 17:00)
-  workflow_dispatch:     # 允许手动触发
+    - cron: '0 0 * * *'
+    - cron: '0 9 * * *'
+  workflow_dispatch:
 
 jobs:
   update:
@@ -19,6 +19,32 @@ jobs:
         with:
           python-version: '3.x'
 
+      # === 新增步骤：获取免费代理 ===
+      - name: Get Free Proxy
+        id: get_proxy
+        run: |
+          echo "尝试获取可用代理..."
+          # 尝试多次获取，直到成功或达到最大次数
+          MAX_RETRIES=5
+          for i in $(seq 1 $MAX_RETRIES); do
+            # 使用多个API源，提高成功率
+            PROXY=$(curl -s --max-time 5 https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=cn&ssl=all&anonymity=all | head -n 1)
+            if [[ -z "$PROXY" ]]; then
+              PROXY=$(curl -s --max-time 5 https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt | head -n 1)
+            fi
+            if [[ -n "$PROXY" ]]; then
+              echo "获取到代理: $PROXY"
+              # 设置环境变量供后续步骤使用
+              echo "HTTP_PROXY=http://$PROXY" >> $GITHUB_ENV
+              break
+            fi
+            echo "第 $i 次尝试失败，重试中..."
+            sleep 2
+          done
+          if [[ -z "$(cat $GITHUB_ENV | grep HTTP_PROXY)" ]]; then
+            echo "::warning::未能获取到代理，将尝试直连（可能会失败）"
+          fi
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -26,16 +52,11 @@ jobs:
 
       - name: Run main.py
         run: python main.py
-        env:
-          # 这里设置一个通用的代理环境变量，虽然GitHub官方Runner没有HTTP_PROXY，
-          # 但这样写不会报错，且如果未来你想用自己的Runner也能兼容。
-          # 关键在于 main.py 里的 timeout 已经加长了。
-          PYTHONUNBUFFERED: 1
 
       - name: Commit and Push changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add kaniptv.m3u
-          # 只有当文件有变动时才提交，避免空提交报错
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto update m3u list $(date '+%Y-%m-%d %H:%M:%S')" && git push)
+          git commit -m "Auto update m3u list" || exit 0
+          git push
