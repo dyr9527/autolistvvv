@@ -3,21 +3,22 @@ from bs4 import BeautifulSoup
 import re
 import time
 import os
-import random
 
 # ==================== 配置区 ====================
-BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C%97"
+# 你的目标网址
+BASE_URL = "http://nn.7x9d.cn/xzjd2.php?id=%E6%B2%B3%E5%8C97"
 OUTPUT_FILE = "kaniptv.m3u"
 
-# ✅ 台标源：使用 jsDelivr CDN 加速（比 raw.githubusercontent.com 更稳定）
+# ✅ 台标源：使用 jsDelivr CDN 加速 (比 raw.githubusercontent.com 更稳定)
 LOGO_BASE_URL = "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/"
 
 # ✅ EPG 节目单地址
 EPG_URL = "https://epg.zsdc.eu.org/t.xml.gz"
 
-# ✅ 筛选条件：必须同时包含以下两个关键词
-TARGET_KEYWORD = "河北电信"   # 运营商关键词
-TARGET_DATE = "2026-06-12"    # 收录时间
+# ✅ 筛选条件配置
+TARGET_REGION = "河北"       # 地区关键词
+TARGET_ISP = "电信"          # 运营商关键词 (对应截图中的 河北-电信)
+TARGET_DATE = "2026-06-12"   # 收录时间 (精确到日)
 
 SUFFIX_WORDS = [
     "高清", "HD", "hd", "4K", "超清", "标清", "SD",
@@ -28,278 +29,178 @@ SUFFIX_WORDS = [
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
 }
 
-# ==================== 核心网络模块（含自动代理） ====================
+# 代理池（可选，用于防止IP被封）
+PROXIES = {
+    # 'http': 'http://127.0.0.1:7890',
+    # 'https': 'http://127.0.0.1:7890'
+}
 
-def get_proxy():
+
+def get_page_content(url):
+    """通用页面获取函数"""
+    try:
+        resp = requests.get(url, headers=HEADERS, proxies=PROXIES, timeout=10)
+        resp.encoding = 'utf-8'
+        return resp.text
+    except Exception as e:
+        print(f"[错误] 无法访问 {url}: {e}")
+        return None
+
+
+def extract_real_link(detail_url):
     """
-    尝试从公开接口获取一个可用的 HTTP 代理
+    进入详情页提取真实播放地址
+    这里假设详情页里包含 .m3u8 或 .ts 链接
     """
-    proxy_apis = [
-        "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=5000&country=cn&ssl=all&anonymity=all",
-    ]
-
-    for api in proxy_apis:
-        try:
-            resp = requests.get(api, timeout=5)
-            if resp.status_code == 200:
-                proxies_list = resp.text.strip().split('\r\n')
-                if proxies_list:
-                    ip_port = random.choice(proxies_list).strip()
-                    if ':' in ip_port:
-                        print(f"🚀 获取到临时代理: {ip_port}")
-                        return {"http": f"http://{ip_port}", "https": f"http://{ip_port}"}
-        except Exception as e:
-            continue
-
-    print("⚠️ 未能获取到可用代理，将尝试直连...")
-    return None
-
-def safe_request(url, max_retries=3):
-    """
-    带重试和代理机制的安全请求函数
-    """
-    proxy = get_proxy()
-
-    for attempt in range(max_retries):
-        try:
-            print(f"   🔄 正在请求 (尝试 {attempt+1}/{max_retries})...")
-            resp = requests.get(url, headers=HEADERS, proxies=proxy, timeout=15)
-
-            if resp.status_code == 200:
-                if len(resp.text) > 100:
-                    return resp.text
-                else:
-                    print(f"   ⚠️ 响应内容过短，可能被拦截，切换代理重试...")
-                    proxy = get_proxy()
-            else:
-                print(f"   ⚠️ 状态码: {resp.status_code}")
-
-        except requests.exceptions.RequestException as e:
-            print(f"   ❌ 请求失败: {e}")
-            proxy = get_proxy()
-
-    return None
-
-# ==================== 业务逻辑 ====================
-
-def get_telecom_links(page_url):
-    print(f"🔍 正在分析入口页面: {page_url}")
-    html = safe_request(page_url)
-
+    html = get_page_content(detail_url)
     if not html:
-        print("❌ 无法访问入口页面，请检查网络或代理")
-        return []
+        return None
 
     soup = BeautifulSoup(html, 'html.parser')
-    telecom_links = []
 
-    # ✅ 先找所有包含 TARGET_KEYWORD 的文本节点
-    keyword_tags = soup.find_all(string=re.compile(TARGET_KEYWORD))
+    # --- 尝试多种常见的播放地址提取方式 ---
+    real_link = None
 
-    found_count = 0
-    for tag in keyword_tags:
-        # 获取该文本所在的父级 <a> 标签
-        btn = tag.find_parent(name='a')
+    # 1. 查找 video 标签
+    video_tag = soup.find('video')
+    if video_tag and video_tag.get('src'):
+        real_link = video_tag['src']
 
-        if btn and btn.get('href'):
-            link_text = btn.get_text(strip=True)
+    # 2. 查找 source 标签
+    if not real_link:
+        source_tag = soup.find('source')
+        if source_tag and source_tag.get('src'):
+            real_link = source_tag['src']
 
-            # ✅ 双重验证：必须同时包含关键词和日期
-            if TARGET_DATE in link_text:
-                link = btn['href']
-                # 补全相对路径
-                if not link.startswith('http'):
-                    base_domain = "http://nn.7x9d.cn"
-                    link = base_domain + "/" + link.lstrip('/')
-
-                print(f"✅ 匹配成功 [{TARGET_DATE}]: {link_text} -> {link}")
-                telecom_links.append(link)
-                found_count += 1
-            else:
-                # 包含关键词但不包含目标日期的，跳过
-                print(f"⏭️ 跳过非目标日期源: {link_text}")
-
-    if found_count == 0:
-        print(f"⚠️ 未找到同时包含 '{TARGET_KEYWORD}' 和 '{TARGET_DATE}' 的链接，请检查网页结构或日期格式。")
-
-    return list(set(telecom_links))
-
-def fetch_playlist(url):
-    print(f"   📡 正在抓取子源: {url}")
-    content = safe_request(url)
-
-    if not content:
-        print(f"   ❌ 子源抓取失败")
-        return ""
-
-    if len(content) < 50:
-        print(f"   ⚠️ 内容过少，跳过")
-        return ""
-
-    return content
-
-def parse_raw_content(content):
-    channels = []
-    lines = content.replace('<br>', '\n').replace('<br/>', '\n').splitlines()
-    current_extinf = ""
-
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith('#!') or line.startswith('//'):
-            continue
-
-        if line.startswith('#EXTINF'):
-            current_extinf = line
-            continue
-
-        if not line.startswith('#') and current_extinf:
-            url = line
-            if ',' in current_extinf:
-                channel_name = current_extinf.split(',')[-1].strip()
-            else:
-                channel_name = "未知频道"
-
-            if channel_name and url.startswith('http'):
-                channels.append({'name': channel_name, 'url': url})
-            current_extinf = ""
-            continue
-
-        if ',' in line and not line.startswith('#'):
-            parts = line.split(',', 1)
-            if len(parts) == 2:
-                channel_name, url = [x.strip() for x in parts]
-                if channel_name and url.startswith('http'):
-                    channels.append({'name': channel_name, 'url': url})
-
-    return channels
-
-def extract_logo_name(channel_name):
-    name = channel_name.strip()
-    if name.upper().startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(\d+?)", name.upper())
+    # 3. 正则匹配 .m3u8 或 .ts 链接
+    if not real_link:
+        # 匹配 http(s)://...m3u8 或相对路径 ...m3u8
+        match = re.search(r'(https?://[^\s"\']+\.m3u8[^\s"\']*)', html)
         if match:
-            num = match.group(1).replace("+", "PLUS")
-            return f"CCTV{num}"
-    if "卫视" in name:
-        match = re.search(r"(.+?)卫视", name)
-        if match:
-            return match.group(1).strip()
+            real_link = match.group(1)
+        else:
+            match = re.search(r'(https?://[^\s"\']+\.ts[^\s"\']*)', html)
+            if match:
+                real_link = match.group(1)
 
-    clean_name = name
+    # 处理相对路径
+    if real_link and not real_link.startswith('http'):
+        from urllib.parse import urljoin
+        real_link = urljoin(detail_url, real_link)
+
+    return real_link
+
+
+def clean_channel_name(name):
+    """清理频道名称，去除后缀干扰"""
     for word in SUFFIX_WORDS:
-        clean_name = clean_name.replace(word, "")
-    return clean_name.strip() if clean_name.strip() else name
+        name = name.replace(word, "")
+    # 去除特殊字符
+    name = re.sub(r'[^\w\s\u4e00-\u9fff]', '', name).strip()
+    return name if name else "未知频道"
 
-def get_channel_group(channel_name):
-    name = channel_name.strip()
-    if name.upper().startswith("CCTV"): return "央视频道"
-    elif "卫视" in name: return "卫视频道"
-    elif "河北" in name: return "河北地方"
-    elif any(x in name for x in ["电影", "影院"]): return "影视频道"
-    elif any(x in name for x in ["体育", "赛事"]): return "体育频道"
-    elif any(x in name for x in ["少儿", "卡通"]): return "少儿频道"
-    else: return "其他"
 
-def get_epg_id(channel_name):
-    name = channel_name.strip().upper()
-    if name.startswith("CCTV"):
-        match = re.search(r"CCTV[-\s]?(\d+?)", name)
-        if match: return f"CCTV{match.group(1).replace('+', 'PLUS')}"
-    if "卫视" in name:
-        match = re.search(r"(.+?)卫视", name)
-        if match:
-            province = match.group(1).strip()
-            p_map = {
-                "北京": "BTV", "上海": "东方卫视", "天津": "天津卫视", "重庆": "重庆卫视",
-                "湖南": "湖南卫视", "浙江": "浙江卫视", "江苏": "江苏卫视", "广东": "广东卫视",
-                "山东": "山东卫视", "河南": "河南卫视", "河北": "河北卫视", "四川": "四川卫视",
-                "湖北": "湖北卫视", "辽宁": "辽宁卫视", "黑龙江": "黑龙江卫视", "吉林": "吉林卫视",
-                "安徽": "安徽卫视", "福建": "福建卫视", "江西": "江西卫视", "山西": "山西卫视",
-                "陕西": "陕西卫视", "甘肃": "甘肃卫视", "青海": "青海卫视", "宁夏": "宁夏卫视",
-                "新疆": "新疆卫视", "西藏": "西藏卫视", "内蒙古": "内蒙古卫视", "广西": "广西卫视",
-                "贵州": "贵州卫视", "云南": "云南卫视", "海南": "海南卫视"
-            }
-            return p_map.get(province, f"{province}卫视")
-    if "河北" in name: return name.replace("高清", "").replace("HD", "").strip()
-    return name
+def generate_m3u(links_data):
+    """生成 M3U 文件内容"""
+    lines = [
+        '#EXTM3U',
+        f'#EXTINF:-1 tvg-logo="{LOGO_BASE_URL}" group-title="IPTV",{EPG_URL}',  # 全局设置通常放在头部或单独处理，这里主要写入条目
+        ''
+    ]
 
-def enrich_channels(raw_channels):
-    merged = {}
-    for ch in raw_channels:
-        name = ch['name']
-        url = ch['url']
-        if name not in merged:
-            # 构造 Logo URL: BaseURL + CleanName.png
-            logo_name = extract_logo_name(name).replace(' ', '').replace('-', '')
-            logo_url = f"{LOGO_BASE_URL}{logo_name}.png"
+    for item in links_data:
+        # 构建 Logo URL
+        logo_url = f"{LOGO_BASE_URL}{item['name']}.png"
 
-            merged[name] = {
-                'group': get_channel_group(name),
-                'logo': logo_url,
-                'epg': get_epg_id(name),
-                'urls': []
-            }
-        if url not in merged[name]['urls']:
-            merged[name]['urls'].append(url)
-    return merged
+        line = (
+            f'#EXTINF:-1 tvg-id="{item["name"]}" '
+            f'tvg-name="{item["name"]}" '
+            f'tvg-logo="{logo_url}" '
+            f'group-title="{item["isp"]}",'
+            f'{item["display_name"]}\n'
+            f'{item["url"]}'
+        )
+        lines.append(line)
 
-def generate_m3u(enriched_channels, output_file):
-    with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        # 写入 M3U 头部和 EPG 链接
-        f.write(f'#EXTM3U x-tvg-url="{EPG_URL}"\n')
-        total_count = 0
-        for name, info in enriched_channels.items():
-            for idx, url in enumerate(info['urls']):
-                suffix = f" 源{idx+1}" if len(info['urls']) > 1 else ""
-                display_name = f"{name}{suffix}"
-                extinf = (
-                    f'#EXTINF:-1 '
-                    f'group-title="{info["group"]}" '
-                    f'tvg-id="{info["epg"]}" '
-                    f'tvg-name="{name}" '
-                    f'tvg-logo="{info["logo"]}",'
-                    f'{display_name}'
-                )
-                f.write(f"{extinf}\n{url}\n")
-                total_count += 1
-    return total_count
+    return '\n'.join(lines)
+
 
 def main():
-    print("=" * 50)
-    print(f"🚀 河北电信直播源抓取工具 (目标日期: {TARGET_DATE})")
-    print("=" * 50)
-
-    links = get_telecom_links(BASE_URL)
-    if not links:
-        print("❌ 未找到符合条件的链接，程序终止")
-        with open(OUTPUT_FILE, 'w') as f: f.write("#EMPTY\n")
+    print(f"[*] 正在访问列表页: {BASE_URL}")
+    html = get_page_content(BASE_URL)
+    if not html:
         return
 
-    all_raw_channels = []
-    for i, link in enumerate(links, 1):
-        print(f"\n--- [{i}/{len(links)}] ---")
-        content = fetch_playlist(link)
-        if content:
-            channels = parse_raw_content(content)
-            print(f"   ✅ 解析出 {len(channels)} 个频道")
-            all_raw_channels.extend(channels)
-        time.sleep(1)
+    soup = BeautifulSoup(html, 'html.parser')
+    valid_links = []
 
-    if not all_raw_channels:
-        print("\n⚠️ 未能解析出任何频道数据，生成空文件")
-        with open(OUTPUT_FILE, 'w') as f: f.write("#EMPTY\n")
-        return
+    # 寻找包含信息的容器
+    # 根据截图结构，每个IP块可能在一个 div 或 li 中，我们遍历所有包含日期的块
+    # 这里使用 findAll 查找所有可能包含 "收录时间" 的父级元素
+    # 注意：具体的 class 名需要根据实际网页源码调整，这里假设没有特定 class，直接全文搜索逻辑
+    all_text_blocks = soup.find_all(string=re.compile(TARGET_DATE))
 
-    enriched = enrich_channels(all_raw_channels)
-    total = generate_m3u(enriched, OUTPUT_FILE)
+    print(f"[*] 找到包含日期 '{TARGET_DATE}' 的文本块数量: {len(all_text_blocks)}")
 
-    print("\n" + "=" * 50)
-    print(f"🎉 完成！唯一频道: {len(enriched)}, 总线路: {total}")
-    print("=" * 50)
+    for text_block in all_text_blocks:
+        parent_div = text_block.find_parent(['div', 'li', 'td'])
+        if not parent_div:
+            continue
 
-if __name__ == '__main__':
+        full_text = parent_div.get_text()
+
+        # 1. 筛选运营商 (必须包含 河北 和 电信)
+        if TARGET_REGION not in full_text or TARGET_ISP not in full_text:
+            continue
+
+        # 2. 再次确认日期 (防止误判)
+        if TARGET_DATE not in full_text:
+            continue
+
+        # 3. 提取蓝色框框的链接 (href)
+        # 假设蓝色框框是一个 <a> 标签，且里面包含 IP 格式文本
+        link_tag = parent_div.find('a', string=re.compile(r'\d+\.\d+\.\d+\.\d+'))
+
+        if link_tag and link_tag.get('href'):
+            detail_url = link_tag['href']
+            # 处理相对路径
+            if not detail_url.startswith('http'):
+                from urllib.parse import urljoin
+                detail_url = urljoin(BASE_URL, detail_url)
+
+            display_ip = link_tag.get_text().strip()
+            print(f"[发现] 目标IP: {display_ip} -> 详情页: {detail_url}")
+
+            # 4. 进入详情页获取真实播放地址
+            real_url = extract_real_link(detail_url)
+
+            if real_url:
+                # 尝试从详情页标题或周围文本获取频道名，如果没有则用IP代替
+                channel_name = clean_channel_name(display_ip.split(':')[0]) # 简单用IP前段做名字，或者你可以优化提取逻辑
+
+                valid_links.append({
+                    'name': channel_name,
+                    'display_name': f"{TARGET_REGION}{TARGET_ISP}_{display_ip}",
+                    'isp': f"{TARGET_REGION}{TARGET_ISP}",
+                    'url': real_url
+                })
+            else:
+                print(f"  [警告] 无法从详情页提取播放地址: {detail_url}")
+        else:
+            print(f"  [警告] 在文本块中未找到有效的链接标签: {full_text[:50]}...")
+
+    # 保存文件
+    if valid_links:
+        m3u_content = generate_m3u(valid_links)
+        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            f.write(m3u_content)
+        print(f"\n[成功] 已生成 {OUTPUT_FILE}，共收录 {len(valid_links)} 个源。")
+    else:
+        print("\n[失败] 未找到符合条件的源，请检查筛选条件或网页结构是否变更。")
+
+
+if __name__ == "__main__":
     main()
